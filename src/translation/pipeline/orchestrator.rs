@@ -542,8 +542,8 @@ mod tests {
         let pipeline = TranslationPipeline::for_languages("en", "fr");
         let result = pipeline.analyze(&mut doc);
 
-        // Even with simple test data, analysis should run
-        assert!(result.scene_count >= 0);
+        // Analysis should run and produce a result
+        let _ = result.scene_count;
     }
 
     #[test]

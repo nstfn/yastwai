@@ -8,8 +8,6 @@
  * - Length validation (reasonable translation length ratios)
  */
 
-// Allow dead code and unused imports - validation types are for library consumers
-#![allow(dead_code)]
 #![allow(unused_imports)]
 
 pub mod markers;

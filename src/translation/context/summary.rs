@@ -147,8 +147,11 @@ Summary:"#,
     fn extract_likely_names(&self, entries: &[DocumentEntry]) -> Vec<String> {
         use regex::Regex;
         use std::collections::HashMap;
+        use std::sync::LazyLock;
 
-        let name_pattern = Regex::new(r"\b([A-Z][a-z]+)\b").unwrap();
+        static NAME_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"\b([A-Z][a-z]+)\b").unwrap()
+        });
         let mut name_counts: HashMap<String, usize> = HashMap::new();
 
         // Common words to exclude
@@ -158,7 +161,7 @@ Summary:"#,
         ];
 
         for entry in entries {
-            for cap in name_pattern.captures_iter(&entry.original_text) {
+            for cap in NAME_PATTERN.captures_iter(&entry.original_text) {
                 if let Some(name) = cap.get(1) {
                     let name_str = name.as_str();
                     if !exclude.contains(&name_str) {
@@ -200,7 +203,7 @@ Summary:"#,
                 let text = &entries[idx].original_text;
                 // Truncate long snippets
                 let snippet = if text.len() > 50 {
-                    format!("{}...", &text[..47])
+                    format!("{}...", crate::utils::truncate_utf8(text, 47))
                 } else {
                     text.clone()
                 };
@@ -217,14 +220,14 @@ Summary:"#,
             return text.to_string();
         }
 
-        let truncated = &text[..self.config.max_summary_chars - 3];
+        let truncated = crate::utils::truncate_utf8(text, self.config.max_summary_chars.saturating_sub(3));
         // Find last complete sentence or word
         if let Some(last_period) = truncated.rfind(". ") {
             format!("{}.", &truncated[..last_period])
         } else if let Some(last_space) = truncated.rfind(' ') {
             format!("{}...", &truncated[..last_space])
         } else {
-            format!("{}...", truncated)
+            format!("{truncated}...")
         }
     }
 

@@ -28,7 +28,6 @@ pub struct Controller {
 
 impl Controller {
     /// Create a new controller for test purposes with default configuration
-    #[allow(dead_code)]
     pub fn new_for_test() -> Result<Self> {
         Self::with_config(Config::default())
     }
@@ -60,25 +59,21 @@ impl Controller {
     }
 
     /// Check if session persistence is available
-    #[allow(dead_code)]
     pub fn has_session_support(&self) -> bool {
         self.session_manager.is_some()
     }
     
     /// Check if the controller is properly initialized - used by tests
-    #[allow(dead_code)]
     pub fn is_initialized(&self) -> bool {
         !self.config.source_language.is_empty() && !self.config.target_language.is_empty()
     }
     
     /// Public method to write logs to a file - used by tests
-    #[allow(dead_code)]
     pub fn write_translation_logs(&self, logs: &[LogEntry], file_path: &str, translation_context: &str) -> Result<()> {
         self.write_logs_to_file(logs, file_path, translation_context)
     }
 
     /// Test version of run method - used by tests
-    #[allow(dead_code)]
     pub async fn test_run(&self, input_file: PathBuf, output_dir: PathBuf, force_overwrite: bool) -> Result<()> {
         // For testing purposes, just validate the configuration and simulate success
         info!("Test run initiated for file: {:?}", input_file);
@@ -95,7 +90,6 @@ impl Controller {
     }
 
     /// Test version of run_folder method - used by tests
-    #[allow(dead_code)]
     pub async fn test_run_folder(&self, input_dir: PathBuf, force_overwrite: bool) -> Result<()> {
         // For testing purposes, just validate the configuration and simulate success
         info!("Test run folder initiated for directory: {:?}", input_dir);
@@ -207,7 +201,9 @@ impl Controller {
             let target_lang = self.config.target_language.clone();
             tokio::spawn(async move {
                 if let Ok(translation_service) = TranslationService::new(config_clone.translation) {
-                    let _ = translation_service.test_connection(&source_lang, &target_lang, None).await;
+                    if let Err(e) = translation_service.test_connection(&source_lang, &target_lang, None).await {
+                        warn!("Provider connection test failed: {}", e);
+                    }
                 }
             });
         });
@@ -312,7 +308,9 @@ impl Controller {
             // Mark session complete
             if let Some(ref session) = session_info {
                 if let Some(ref session_manager) = self.session_manager {
-                    let _ = session_manager.complete_session(&session.id).await;
+                    if let Err(e) = session_manager.complete_session(&session.id).await {
+                        warn!("Failed to mark session as complete: {}", e);
+                    }
                 }
             }
 

@@ -7,9 +7,6 @@
  * 3. **Validation Pass**: Check quality, consistency, and auto-repair issues
  */
 
-// Allow dead code in pipeline submodules (experimental features)
-#![allow(dead_code)]
-
 pub mod adapter;
 pub mod analysis_pass;
 pub mod orchestrator;

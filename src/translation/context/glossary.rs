@@ -11,8 +11,32 @@
 
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use crate::translation::document::{DocumentEntry, Glossary, SubtitleDocument};
+
+/// Static set of common English words that shouldn't be extracted as names.
+static DEFAULT_EXCLUDE_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    [
+        "I", "The", "A", "An", "This", "That", "These", "Those", "It", "He", "She", "They",
+        "We", "You", "My", "Your", "His", "Her", "Our", "Their", "What", "Who", "Where",
+        "When", "Why", "How", "Yes", "No", "Oh", "Ah", "Hey", "Well", "Now", "Then", "Here",
+        "There", "Please", "Thank", "Thanks", "Sorry", "Hello", "Hi", "Goodbye", "Bye",
+        "Mr", "Mrs", "Ms", "Dr", "Sir", "Ma'am", "OK", "Okay",
+    ]
+    .into_iter()
+    .collect()
+});
+
+/// Pattern for capitalized words (potential names)
+static NAME_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b").unwrap()
+});
+
+/// Pattern for quoted phrases
+static QUOTED_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#""([^"]+)""#).unwrap()
+});
 
 /// Configuration for glossary extraction.
 #[derive(Debug, Clone)]
@@ -35,24 +59,12 @@ pub struct ExtractionConfig {
 
 impl Default for ExtractionConfig {
     fn default() -> Self {
-        let mut exclude_words = HashSet::new();
-        // Common English words that shouldn't be extracted as names
-        for word in &[
-            "I", "The", "A", "An", "This", "That", "These", "Those", "It", "He", "She", "They",
-            "We", "You", "My", "Your", "His", "Her", "Our", "Their", "What", "Who", "Where",
-            "When", "Why", "How", "Yes", "No", "Oh", "Ah", "Hey", "Well", "Now", "Then", "Here",
-            "There", "Please", "Thank", "Thanks", "Sorry", "Hello", "Hi", "Goodbye", "Bye",
-            "Mr", "Mrs", "Ms", "Dr", "Sir", "Ma'am", "OK", "Okay",
-        ] {
-            exclude_words.insert(word.to_string());
-        }
-
         Self {
             min_occurrences: 2,
             extract_names: true,
             extract_quoted: true,
             custom_patterns: Vec::new(),
-            exclude_words,
+            exclude_words: DEFAULT_EXCLUDE_WORDS.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -96,20 +108,12 @@ impl ExtractionConfig {
 /// Glossary extractor for automatic term detection.
 pub struct GlossaryExtractor {
     config: ExtractionConfig,
-    name_pattern: Regex,
-    quoted_pattern: Regex,
 }
 
 impl GlossaryExtractor {
     /// Create a new glossary extractor with the given configuration.
     pub fn new(config: ExtractionConfig) -> Self {
-        Self {
-            config,
-            // Pattern for capitalized words (potential names)
-            name_pattern: Regex::new(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b").unwrap(),
-            // Pattern for quoted phrases
-            quoted_pattern: Regex::new(r#""([^"]+)""#).unwrap(),
-        }
+        Self { config }
     }
 
     /// Create an extractor with default configuration.
@@ -128,7 +132,7 @@ impl GlossaryExtractor {
 
             // Extract potential names
             if self.config.extract_names {
-                for cap in self.name_pattern.captures_iter(text) {
+                for cap in NAME_PATTERN.captures_iter(text) {
                     if let Some(name) = cap.get(1) {
                         let name_str = name.as_str().to_string();
                         if !self.config.exclude_words.contains(&name_str)
@@ -142,7 +146,7 @@ impl GlossaryExtractor {
 
             // Extract quoted phrases
             if self.config.extract_quoted {
-                for cap in self.quoted_pattern.captures_iter(text) {
+                for cap in QUOTED_PATTERN.captures_iter(text) {
                     if let Some(phrase) = cap.get(1) {
                         let phrase_str = phrase.as_str().to_string();
                         if phrase_str.len() >= 2 {

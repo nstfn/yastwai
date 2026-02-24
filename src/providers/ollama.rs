@@ -4,6 +4,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 use log::error;
 
+use crate::errors::ProviderError;
+use super::{Provider, Role, TranslationRequest, TranslationResponse};
+
 /// Ollama client for interacting with Ollama API
 pub struct Ollama {
     /// Base URL of the Ollama API
@@ -105,8 +108,8 @@ pub struct GenerationResponse {
 /// Chat message object
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
-    /// Role of the message sender (system, user, assistant, or tool)
-    pub role: String,
+    /// Role of the message sender
+    pub role: Role,
     /// Content of the message
     pub content: String,
 }
@@ -188,8 +191,7 @@ pub struct EmbeddingResponse {
     pub embedding: Vec<f32>,
 }
 
-/// Builder methods for GenerationRequest - API surface for library consumers
-#[allow(dead_code)]
+/// Builder methods for GenerationRequest
 impl GenerationRequest {
     /// Create a new generation request
     pub fn new(model: impl Into<String>, prompt: impl Into<String>) -> Self {
@@ -247,8 +249,7 @@ impl GenerationRequest {
     }
 }
 
-/// Builder methods for ChatRequest - API surface for library consumers
-#[allow(dead_code)]
+/// Builder methods for ChatRequest
 impl ChatRequest {
     /// Create a new chat request
     pub fn new(model: impl Into<String>, messages: Vec<ChatMessage>) -> Self {
@@ -304,8 +305,6 @@ impl ChatRequest {
     }
 }
 
-/// Ollama client implementation - some methods are API surface for library consumers
-#[allow(dead_code)]
 impl Ollama {
     /// Create a new Ollama client with the specified base URL
     pub fn new(host: impl Into<String>, port: u16) -> Self {
@@ -675,7 +674,7 @@ impl Ollama {
                                     model,
                                     created_at,
                                     message: ChatMessage {
-                                        role: "assistant".to_string(), 
+                                        role: Role::Assistant,
                                         content: full_content,
                                     },
                                     done: true,
@@ -710,7 +709,7 @@ impl Ollama {
                             model,
                             created_at,
                             message: ChatMessage {
-                                role: "assistant".to_string(),
+                                role: Role::Assistant,
                                 content,
                             },
                             done: true,
@@ -748,7 +747,7 @@ impl Ollama {
                             model,
                             created_at,
                             message: ChatMessage {
-                                role: "assistant".to_string(),
+                                role: Role::Assistant,
                                 content,
                             },
                             done,
@@ -927,4 +926,49 @@ impl Ollama {
         serde_json::from_str(&response.message.content)
             .with_context(|| format!("Failed to parse JSON response: {}", response.message.content))
     }
-} 
+}
+
+impl std::fmt::Debug for Ollama {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ollama")
+            .field("base_url", &self.base_url)
+            .finish()
+    }
+}
+
+impl Provider for Ollama {
+    fn translate<'a>(
+        &'a self,
+        request: &'a TranslationRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TranslationResponse, ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            let gen_request = GenerationRequest::new(&request.model, &request.user_prompt)
+                .system(&request.system_prompt)
+                .temperature(request.temperature);
+
+            let response = self.generate(gen_request).await
+                .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
+
+            Ok(TranslationResponse {
+                text: response.response,
+                input_tokens: response.prompt_eval_count,
+                output_tokens: response.eval_count,
+            })
+        })
+    }
+
+    fn test_connection<'a>(
+        &'a self,
+        _model: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.version().await
+                .map(|_| ())
+                .map_err(|e| ProviderError::ConnectionError(e.to_string()))
+        })
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "Ollama"
+    }
+}

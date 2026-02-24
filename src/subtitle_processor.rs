@@ -2,7 +2,7 @@ use std::fs;
 use std::fs::File;
 use std::fmt;
 use regex::Regex;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use anyhow::{Result, Context, anyhow};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use tokio::process::Command;
 // @module: Subtitle processing and manipulation
 
 // @const: SRT timestamp regex
-static TIMESTAMP_REGEX: Lazy<Regex> = Lazy::new(|| {
+static TIMESTAMP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(\d{2}):(\d{2}):(\d{2}),(\d{3}) --> (\d{2}):(\d{2}):(\d{2}),(\d{3})").unwrap()
 });
 
@@ -37,7 +37,6 @@ pub struct SubtitleEntry {
 
 impl SubtitleEntry {
     /// Creates a new subtitle entry - used by tests and external consumers
-    #[allow(dead_code)]
     pub fn new(seq_num: usize, start_time_ms: u64, end_time_ms: u64, text: String) -> Self {
         SubtitleEntry {
             seq_num,
@@ -73,7 +72,6 @@ impl SubtitleEntry {
     }
     
     /// Parse an SRT timestamp to milliseconds - used by tests
-    #[allow(dead_code)]
     pub fn parse_timestamp(timestamp: &str) -> Result<u64> {
         // Parse HH:MM:SS,mmm format
         let parts: Vec<&str> = timestamp.split(&[':', ',', '.'][..]).collect();
@@ -631,7 +629,6 @@ impl SubtitleCollection {
     }
     
     /// Fast extraction using ffmpeg subtitle copy
-    #[allow(dead_code)]
     pub async fn fast_extract_source_subtitles<P: AsRef<Path>>(video_path: P, source_language: &str) -> Result<Self> {
         debug!("Fast extracting subtitles directly for language: {}", source_language);
         

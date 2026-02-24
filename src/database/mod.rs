@@ -7,8 +7,6 @@
  * - Quality validation results
  */
 
-// Allow dead code and unused imports - database types are for library consumers
-#![allow(dead_code)]
 #![allow(unused_imports)]
 
 pub mod schema;

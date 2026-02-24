@@ -14,11 +14,11 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use yastwai::subtitle_processor::SubtitleEntry;
 use yastwai::translation::{
-    AnalysisPass, ContextWindow, ContextWindowConfig, Glossary, SceneDetector, SubtitleDocument,
-    ValidationPass,
+    AnalysisConfig, AnalysisPass, ContextWindow, ContextWindowConfig, Glossary, SceneDetector,
+    SubtitleDocument,
 };
-use yastwai::translation::pipeline::analysis_pass::AnalysisConfig;
-use yastwai::translation::pipeline::validation_pass::ValidationConfig;
+use yastwai::translation::document::DocumentEntry;
+use yastwai::translation::pipeline::validation_pass::{ValidationConfig, ValidationPass};
 
 /// Generate test subtitle entries.
 fn generate_entries(count: usize) -> Vec<SubtitleEntry> {
@@ -141,7 +141,7 @@ fn bench_context_window_build(c: &mut Criterion) {
             |b, &position| {
                 let config = ContextWindowConfig::default();
                 b.iter(|| {
-                    black_box(ContextWindow::build(&doc, position, &config))
+                    black_box(ContextWindow::new(&doc, position, &config, "en", "fr"))
                 });
             },
         );
@@ -153,11 +153,11 @@ fn bench_context_window_build(c: &mut Criterion) {
 fn bench_context_window_json(c: &mut Criterion) {
     let doc = generate_document(200, true);
     let config = ContextWindowConfig::default();
-    let window = ContextWindow::build(&doc, 100, &config);
+    let window = ContextWindow::new(&doc, 100, &config, "en", "fr");
 
     c.bench_function("context_window_to_json", |b| {
         b.iter(|| {
-            black_box(window.to_prompt_context())
+            black_box(serde_json::to_string(&window).unwrap())
         });
     });
 }
@@ -171,17 +171,19 @@ fn bench_scene_detection(c: &mut Criterion) {
 
     for size in [50, 100, 500, 1000].iter() {
         // Create entries with varying gaps to create scenes
-        let entries: Vec<SubtitleEntry> = (0..*size)
+        let entries: Vec<DocumentEntry> = (0..*size)
             .map(|i| {
                 let gap = if i % 20 == 0 && i > 0 { 10000 } else { 500 };
                 let start = if i == 0 { 0 } else { (i as u64) * 3000 + gap };
-                SubtitleEntry::new(i + 1, start, start + 2500, format!("Entry {}", i))
+                DocumentEntry::from_subtitle_entry(
+                    SubtitleEntry::new(i + 1, start, start + 2500, format!("Entry {}", i)),
+                )
             })
             .collect();
 
         group.throughput(Throughput::Elements(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &entries, |b, entries| {
-            let detector = SceneDetector::new();
+            let detector = SceneDetector::with_defaults();
             b.iter(|| {
                 black_box(detector.detect_scenes(entries))
             });
@@ -321,9 +323,9 @@ fn bench_glossary_character_check(c: &mut Criterion) {
 
     c.bench_function("glossary_character_lookup", |b| {
         b.iter(|| {
-            let _ = black_box(glossary.is_character("John"));
-            let _ = black_box(glossary.is_character("Sarah"));
-            let _ = black_box(glossary.is_character("Unknown"));
+            let _ = black_box(glossary.is_character_name("John"));
+            let _ = black_box(glossary.is_character_name("Sarah"));
+            let _ = black_box(glossary.is_character_name("Unknown"));
         });
     });
 }

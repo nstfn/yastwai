@@ -9,10 +9,11 @@
 use anyhow::{Result, anyhow};
 use log::debug;
 use regex::Regex;
-use once_cell::sync::Lazy;
+use std::collections::HashSet;
+use std::sync::LazyLock;
 
 /// Regex for matching entry markers
-static ENTRY_MARKER_REGEX: Lazy<Regex> = Lazy::new(|| {
+static ENTRY_MARKER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<<ENTRY_(\d+)>>").expect("Invalid entry marker regex")
 });
 
@@ -65,9 +66,10 @@ impl MarkerValidationResult {
         end_marker_present: bool,
         error_message: String,
     ) -> Self {
+        let found_set: HashSet<usize> = found_indices.iter().copied().collect();
         let missing: Vec<usize> = expected_indices
             .iter()
-            .filter(|i| !found_indices.contains(i))
+            .filter(|i| !found_set.contains(i))
             .copied()
             .collect();
 
@@ -111,16 +113,17 @@ impl MarkerValidator {
         // Check for end marker
         let end_marker_present = response.contains(END_MARKER);
 
-        // Check for missing markers
+        // Check for missing markers (O(1) lookups via HashSet)
+        let found_set: HashSet<usize> = found_indices.iter().copied().collect();
         let missing_indices: Vec<usize> = expected_indices
             .iter()
-            .filter(|i| !found_indices.contains(i))
+            .filter(|i| !found_set.contains(i))
             .copied()
             .collect();
 
         // Check for correct order
         let mut sorted_found = found_indices.clone();
-        sorted_found.sort();
+        sorted_found.sort_unstable();
         let out_of_order = found_indices != sorted_found;
 
         let all_present = missing_indices.is_empty();

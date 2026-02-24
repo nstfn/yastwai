@@ -7,8 +7,6 @@
  * - Provider-specific prompt adaptations
  */
 
-#![allow(dead_code)]
-
 pub mod templates;
 
 // Re-export types used by pipeline

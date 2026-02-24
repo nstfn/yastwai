@@ -372,9 +372,9 @@ impl SessionManager {
             .into_iter()
             .map(|(source, translated)| {
                 SubtitleEntry::new(
-                    source.seq_num as usize,
-                    source.start_time_ms as u64,
-                    source.end_time_ms as u64,
+                    source.seq_num.max(0) as usize,
+                    source.start_time_ms.max(0) as u64,
+                    source.end_time_ms.max(0) as u64,
                     translated.translated_text,
                 )
             })

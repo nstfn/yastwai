@@ -2,12 +2,11 @@ use std::time::{Duration, Instant};
 use serde::{de::DeserializeOwned, Serialize, Deserialize};
 use anyhow::{Result, Context, anyhow};
 use reqwest::Client;
-use async_trait::async_trait;
 use tokio::time::sleep;
 use tokio::sync::Mutex;
 
 use crate::errors::ProviderError;
-use super::Provider;
+use super::{Provider, Role, TranslationRequest, TranslationResponse};
 
 
 /// Token bucket rate limiter implementation
@@ -143,9 +142,9 @@ pub struct AnthropicRequest {
 /// Anthropic message format
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AnthropicMessage {
-    /// Role of the message sender (user, assistant)
-    pub role: String,
-    
+    /// Role of the message sender
+    pub role: Role,
+
     /// Content of the message
     pub content: String,
 }
@@ -157,28 +156,13 @@ pub struct TokenUsage {
     pub input_tokens: u32,
     /// Number of output tokens
     pub output_tokens: u32,
-    /// Tokens used to create a new cache entry (prompt caching)
-    #[serde(default)]
-    pub cache_creation_input_tokens: Option<u32>,
-    /// Tokens read from cache (prompt caching)
-    #[serde(default)]
-    pub cache_read_input_tokens: Option<u32>,
 }
 
 /// Anthropic response
 #[derive(Debug, Deserialize)]
 pub struct AnthropicResponse {
-    /// Unique response identifier
-    pub id: Option<String>,
-    /// Response object type (e.g. "message")
-    #[serde(rename = "type")]
-    pub response_type: Option<String>,
     /// The content of the response
     pub content: Vec<AnthropicContent>,
-    /// Model that generated the response
-    pub model: Option<String>,
-    /// Reason the model stopped generating (e.g. "end_turn", "max_tokens")
-    pub stop_reason: Option<String>,
     /// Token usage information
     pub usage: TokenUsage,
 }
@@ -208,8 +192,7 @@ impl Default for AnthropicRequest {
     }
 }
 
-/// Builder methods for AnthropicRequest - API surface for library consumers
-#[allow(dead_code)]
+/// Builder methods for AnthropicRequest
 impl AnthropicRequest {
     /// Create a new Anthropic request
     pub fn new(model: impl Into<String>, max_tokens: u32) -> Self {
@@ -221,9 +204,9 @@ impl AnthropicRequest {
     }
     
     /// Add a message to the request
-    pub fn add_message(mut self, role: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn add_message(mut self, role: Role, content: impl Into<String>) -> Self {
         self.messages.push(AnthropicMessage {
-            role: role.into(),
+            role,
             content: content.into(),
         });
         self
@@ -254,8 +237,6 @@ impl AnthropicRequest {
     }
 }
 
-/// Anthropic client implementation - some methods are API surface for library consumers
-#[allow(dead_code)]
 impl Anthropic {
     /// Create a new Anthropic client with simple configuration
     pub fn new(api_key: impl Into<String>, endpoint: impl Into<String>) -> Self {
@@ -456,8 +437,6 @@ impl Anthropic {
     }
 }
 
-/// Anthropic client implementation - JSON completion helper
-#[allow(dead_code)]
 impl Anthropic {
     /// Complete a request and parse the response as JSON.
     ///
@@ -493,7 +472,7 @@ impl Anthropic {
 
         let request = AnthropicRequest::new(model, max_tokens)
             .system(&json_system_prompt)
-            .add_message("user", user_prompt)
+            .add_message(Role::User, user_prompt)
             .temperature(temperature);
 
         let response = self.send_request_with_retry(&request).await
@@ -543,23 +522,19 @@ impl Anthropic {
 
     /// Find a balanced JSON object or array starting from the beginning of the string.
     fn find_balanced_json(text: &str) -> Option<String> {
-        let chars: Vec<char> = text.chars().collect();
-        if chars.is_empty() {
-            return None;
-        }
-
-        let open_char = chars[0];
+        let mut chars = text.chars();
+        let open_char = chars.next()?;
         let close_char = match open_char {
             '{' => '}',
             '[' => ']',
             _ => return None,
         };
 
-        let mut depth = 0;
+        let mut depth = 1;
         let mut in_string = false;
         let mut escape_next = false;
 
-        for (i, &c) in chars.iter().enumerate() {
+        for (byte_idx, c) in text.char_indices().skip(1) {
             if escape_next {
                 escape_next = false;
                 continue;
@@ -581,7 +556,7 @@ impl Anthropic {
                 } else if c == close_char {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(chars[..=i].iter().collect());
+                        return Some(text[..byte_idx + c.len_utf8()].to_string());
                     }
                 }
             }
@@ -591,20 +566,57 @@ impl Anthropic {
     }
 }
 
-#[async_trait]
-impl Provider for Anthropic {
-    type Request = AnthropicRequest;
-    type Response = AnthropicResponse;
-    
-    /// Complete a messages request
-    async fn complete(&self, request: Self::Request) -> Result<Self::Response, ProviderError> {
+impl Anthropic {
+    /// Complete a messages request (convenience wrapper)
+    pub async fn complete(&self, request: AnthropicRequest) -> Result<AnthropicResponse, ProviderError> {
         self.send_request_with_retry(&request).await
     }
+
     /// Extract text from Anthropic response
-    fn extract_text(response: &Self::Response) -> String {
+    pub fn extract_text(response: &AnthropicResponse) -> String {
         response.content.iter()
             .filter(|c| c.content_type == "text")
             .map(|c| c.text.clone())
             .collect()
     }
-} 
+}
+
+impl Provider for Anthropic {
+    fn translate<'a>(
+        &'a self,
+        request: &'a TranslationRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TranslationResponse, ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            let anthropic_request = AnthropicRequest::new(&request.model, request.max_tokens)
+                .system(&request.system_prompt)
+                .add_message(Role::User, &request.user_prompt)
+                .temperature(request.temperature);
+
+            let response = self.send_request_with_retry(&anthropic_request).await?;
+
+            let text = Self::extract_text(&response);
+
+            Ok(TranslationResponse {
+                text,
+                input_tokens: Some(response.usage.input_tokens as u64),
+                output_tokens: Some(response.usage.output_tokens as u64),
+            })
+        })
+    }
+
+    fn test_connection<'a>(
+        &'a self,
+        model: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            let request = AnthropicRequest::new(model, 1)
+                .add_message(Role::User, "Hi");
+
+            self.send_request_with_retry(&request).await.map(|_| ())
+        })
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "Anthropic"
+    }
+}

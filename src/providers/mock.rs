@@ -7,14 +7,13 @@
  * - `MockProvider::failing()` - Always fails with an error
  */
 
-use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::errors::ProviderError;
-use crate::providers::Provider;
+use crate::providers::{Provider, TranslationRequest, TranslationResponse};
 
-/// Mock request for testing
+/// Mock request for testing (used by internal mock tests)
 #[derive(Debug, Clone)]
 pub struct MockRequest {
     /// The text to translate
@@ -25,7 +24,7 @@ pub struct MockRequest {
     pub target_language: String,
 }
 
-/// Mock response for testing
+/// Mock response for testing (used by internal mock tests)
 #[derive(Debug, Clone)]
 pub struct MockResponse {
     /// The translated text
@@ -126,7 +125,6 @@ impl MockProvider {
     /// Generate a response with some missing markers
     pub fn generate_partial_response(entries: &[&str]) -> String {
         let mut response = String::new();
-        // Only include first and last markers, skip middle ones
         for (i, entry) in entries.iter().enumerate() {
             if i == 0 || i == entries.len() - 1 {
                 response.push_str(&format!("<<ENTRY_{}>>\n", i));
@@ -144,32 +142,15 @@ impl MockProvider {
             response.push_str(&format!("<<ENTRY_{}>>\n", i));
             response.push_str(&format!("[TRANSLATED] {}\n", entry));
         }
-        // No <<END>> marker
         response
     }
-}
 
-impl Clone for MockProvider {
-    fn clone(&self) -> Self {
-        Self {
-            behavior: self.behavior,
-            request_count: Arc::clone(&self.request_count),
-            custom_response: self.custom_response,
-        }
-    }
-}
-
-#[async_trait]
-impl Provider for MockProvider {
-    type Request = MockRequest;
-    type Response = MockResponse;
-
-    async fn complete(&self, request: Self::Request) -> Result<Self::Response, ProviderError> {
+    /// Internal complete method using MockRequest (for unit tests)
+    pub async fn complete(&self, request: MockRequest) -> Result<MockResponse, ProviderError> {
         let count = self.request_count.fetch_add(1, Ordering::SeqCst);
 
         match self.behavior {
             MockBehavior::Working => {
-                // Use custom response if set, otherwise generate default
                 let text = if let Some(generator) = self.custom_response {
                     generator(&request)
                 } else {
@@ -184,7 +165,6 @@ impl Provider for MockProvider {
             }
 
             MockBehavior::PartialMarkers => {
-                // Return response with some markers missing
                 let text = "<<ENTRY_0>>\n[TRANSLATED] First part\nMissing markers in middle\n<<END>>".to_string();
                 Ok(MockResponse {
                     text,
@@ -214,7 +194,6 @@ impl Provider for MockProvider {
             }),
 
             MockBehavior::Truncated => {
-                // Return response without END marker
                 let text = format!("<<ENTRY_0>>\n[TRANSLATED] {}", request.text);
                 Ok(MockResponse {
                     text,
@@ -239,9 +218,55 @@ impl Provider for MockProvider {
             }
         }
     }
+}
 
-    fn extract_text(response: &Self::Response) -> String {
-        response.text.clone()
+impl Clone for MockProvider {
+    fn clone(&self) -> Self {
+        Self {
+            behavior: self.behavior,
+            request_count: Arc::clone(&self.request_count),
+            custom_response: self.custom_response,
+        }
+    }
+}
+
+impl Provider for MockProvider {
+    fn translate<'a>(
+        &'a self,
+        request: &'a TranslationRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TranslationResponse, ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            let mock_request = MockRequest {
+                text: request.user_prompt.clone(),
+                source_language: "en".to_string(),
+                target_language: "target".to_string(),
+            };
+
+            let response = self.complete(mock_request).await?;
+
+            Ok(TranslationResponse {
+                text: response.text,
+                input_tokens: response.prompt_tokens,
+                output_tokens: response.completion_tokens,
+            })
+        })
+    }
+
+    fn test_connection<'a>(
+        &'a self,
+        _model: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            if matches!(self.behavior, MockBehavior::Failing) {
+                Err(ProviderError::ConnectionError("Mock connection failure".to_string()))
+            } else {
+                Ok(())
+            }
+        })
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "Mock"
     }
 }
 
@@ -278,7 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_intermittentProvider_shouldFailPeriodically() {
-        let provider = MockProvider::intermittent(3); // Fail every 3rd request
+        let provider = MockProvider::intermittent(3);
 
         let request = MockRequest {
             text: "Test".to_string(),
@@ -286,15 +311,11 @@ mod tests {
             target_language: "fr".to_string(),
         };
 
-        // Requests 1, 2 should succeed
         assert!(provider.complete(request.clone()).await.is_ok());
         assert!(provider.complete(request.clone()).await.is_ok());
-        // Request 3 should fail
         assert!(provider.complete(request.clone()).await.is_err());
-        // Requests 4, 5 should succeed
         assert!(provider.complete(request.clone()).await.is_ok());
         assert!(provider.complete(request.clone()).await.is_ok());
-        // Request 6 should fail
         assert!(provider.complete(request.clone()).await.is_err());
     }
 
@@ -345,7 +366,7 @@ mod tests {
         let response = MockProvider::generate_partial_response(&entries);
 
         assert!(response.contains("<<ENTRY_0>>"));
-        assert!(!response.contains("<<ENTRY_1>>")); // Middle marker should be missing
+        assert!(!response.contains("<<ENTRY_1>>"));
         assert!(response.contains("<<ENTRY_2>>"));
         assert!(response.contains("<<END>>"));
     }
@@ -387,9 +408,31 @@ mod tests {
             target_language: "fr".to_string(),
         };
 
-        // First request on original should succeed
         assert!(provider.complete(request.clone()).await.is_ok());
-        // Second request on clone should fail (shared counter)
         assert!(cloned.complete(request.clone()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_provider_trait_translate() {
+        let provider = MockProvider::working();
+        let request = TranslationRequest {
+            model: "test-model".to_string(),
+            system_prompt: "Translate".to_string(),
+            user_prompt: "Hello world".to_string(),
+            temperature: 0.3,
+            max_tokens: 100,
+        };
+
+        let response = provider.translate(&request).await.unwrap();
+        assert!(response.text.contains("TRANSLATED"));
+    }
+
+    #[tokio::test]
+    async fn test_provider_trait_test_connection() {
+        let working = MockProvider::working();
+        assert!(working.test_connection("test").await.is_ok());
+
+        let failing = MockProvider::failing();
+        assert!(failing.test_connection("test").await.is_err());
     }
 }

@@ -3,6 +3,7 @@
  */
 
 use yastwai::providers::Provider;
+use yastwai::providers::Role;
 use yastwai::providers::openai::{OpenAI, OpenAIRequest};
 use yastwai::providers::anthropic::{Anthropic, AnthropicRequest};
 use yastwai::providers::ollama::{Ollama, GenerationRequest, ChatRequest, ChatMessage};
@@ -19,8 +20,8 @@ async fn test_openai_provider_withValidApiKey_shouldComplete() {
     
     let client = OpenAI::new(api_key, "");
     let request = OpenAIRequest::new("gpt-3.5-turbo")
-        .add_message("system", "You are a helpful assistant.")
-        .add_message("user", "Say hello!")
+        .add_message(Role::System, "You are a helpful assistant.")
+        .add_message(Role::User, "Say hello!")
         .max_tokens(10);
     
     let response = client.complete(request).await.unwrap();
@@ -44,7 +45,7 @@ async fn test_anthropic_provider_withValidApiKey_shouldComplete() {
     let client = Anthropic::new(api_key, "");
     let request = AnthropicRequest::new("claude-3-haiku-20240307", 1024)
         .system("You are a helpful assistant.")
-        .add_message("user", "Say hello!");
+        .add_message(Role::User, "Say hello!");
     
     let response = client.complete(request).await.unwrap();
     
@@ -101,7 +102,7 @@ async fn test_ollama_provider_withLocalServer_shouldChat() {
     }
     
     let messages = vec![
-        ChatMessage { role: "user".to_string(), content: "Hello, world!".to_string() }
+        ChatMessage { role: Role::User, content: "Hello, world!".to_string() }
     ];
     
     let request = ChatRequest::new("gemma3:27b", messages)

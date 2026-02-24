@@ -8,8 +8,6 @@
  * NOTE: This is an experimental feature that is not yet enabled.
  */
 
-#![allow(dead_code)]
-
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::RwLock;

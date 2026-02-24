@@ -2,6 +2,7 @@
  * Tests for Ollama provider request builders
  */
 
+use yastwai::providers::Role;
 use yastwai::providers::ollama::{GenerationRequest, ChatMessage};
 
 #[test]
@@ -32,44 +33,44 @@ fn test_generationRequest_chained_shouldAllowMultipleBuilderCalls() {
 #[test]
 fn test_chatMessage_struct_shouldHavePublicFields() {
     let message = ChatMessage {
-        role: "user".to_string(),
+        role: Role::User,
         content: "Hello!".to_string(),
     };
-    assert_eq!(message.role, "user");
+    assert_eq!(message.role, Role::User);
     assert_eq!(message.content, "Hello!");
 }
 
 #[test]
 fn test_chatMessage_asUserMessage_shouldWork() {
     let message = ChatMessage {
-        role: "user".to_string(),
+        role: Role::User,
         content: "Test message".to_string(),
     };
-    assert_eq!(message.role, "user");
+    assert_eq!(message.role, Role::User);
 }
 
 #[test]
 fn test_chatMessage_asAssistantMessage_shouldWork() {
     let message = ChatMessage {
-        role: "assistant".to_string(),
+        role: Role::Assistant,
         content: "Response".to_string(),
     };
-    assert_eq!(message.role, "assistant");
+    assert_eq!(message.role, Role::Assistant);
 }
 
 #[test]
 fn test_chatMessage_asSystemMessage_shouldWork() {
     let message = ChatMessage {
-        role: "system".to_string(),
+        role: Role::System,
         content: "You are helpful".to_string(),
     };
-    assert_eq!(message.role, "system");
+    assert_eq!(message.role, Role::System);
 }
 
 #[test]
 fn test_chatMessage_withEmptyContent_shouldWork() {
     let message = ChatMessage {
-        role: "user".to_string(),
+        role: Role::User,
         content: "".to_string(),
     };
     assert_eq!(message.content, "");
@@ -78,7 +79,7 @@ fn test_chatMessage_withEmptyContent_shouldWork() {
 #[test]
 fn test_chatMessage_withUnicode_shouldHandleCorrectly() {
     let message = ChatMessage {
-        role: "user".to_string(),
+        role: Role::User,
         content: "こんにちは 你好 مرحبا".to_string(),
     };
     assert_eq!(message.content, "こんにちは 你好 مرحبا");
@@ -88,7 +89,7 @@ fn test_chatMessage_withUnicode_shouldHandleCorrectly() {
 fn test_chatMessage_withNewlines_shouldPreserve() {
     let content = "Line 1\nLine 2\nLine 3";
     let message = ChatMessage {
-        role: "user".to_string(),
+        role: Role::User,
         content: content.to_string(),
     };
     assert_eq!(message.content, content);
@@ -97,7 +98,7 @@ fn test_chatMessage_withNewlines_shouldPreserve() {
 #[test]
 fn test_chatMessage_clone_shouldWork() {
     let message = ChatMessage {
-        role: "user".to_string(),
+        role: Role::User,
         content: "Test".to_string(),
     };
     let cloned = message.clone();
@@ -108,10 +109,10 @@ fn test_chatMessage_clone_shouldWork() {
 #[test]
 fn test_chatMessage_debug_shouldBeImplemented() {
     let message = ChatMessage {
-        role: "user".to_string(),
+        role: Role::User,
         content: "Test".to_string(),
     };
     let debug = format!("{:?}", message);
-    assert!(debug.contains("user"));
+    assert!(debug.contains("User"));
     assert!(debug.contains("Test"));
 }

@@ -7,9 +7,6 @@
  * - Progress tracking and state management
  */
 
-// Allow dead code - session types have extra methods for future use
-#![allow(dead_code)]
-
 pub mod manager;
 pub mod models;
 

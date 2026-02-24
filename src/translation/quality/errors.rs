@@ -148,7 +148,7 @@ impl TranslationError {
     pub fn retry_delay(&self) -> Duration {
         // Exponential backoff based on retry count
         let base_delay = self.kind.recommended_delay();
-        let multiplier = 2u32.pow(self.retry_count as u32);
+        let multiplier = 2u32.saturating_pow(self.retry_count as u32);
         base_delay * multiplier
     }
 

@@ -222,9 +222,9 @@ impl PendingEntry {
     /// Convert to a SubtitleEntry for translation
     pub fn to_subtitle_entry(&self) -> SubtitleEntry {
         SubtitleEntry::new(
-            self.seq_num as usize,
-            self.start_time_ms as u64,
-            self.end_time_ms as u64,
+            self.seq_num.max(0) as usize,
+            self.start_time_ms.max(0) as u64,
+            self.end_time_ms.max(0) as u64,
             self.source_text.clone(),
         )
     }

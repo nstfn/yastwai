@@ -133,7 +133,7 @@ impl PipelineAdapter {
         B: Fn(Vec<SubtitleEntry>) + Clone + Send + Sync + 'static,
     {
         // Flatten chunks into a single list
-        let entries: Vec<SubtitleEntry> = chunks.iter().flat_map(|c| c.clone()).collect();
+        let entries: Vec<SubtitleEntry> = chunks.iter().flat_map(|c| c.iter().cloned()).collect();
 
         // Use the single-pass translation
         self.translate_entries(

@@ -9,16 +9,16 @@
  */
 
 use log::debug;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use regex::Regex;
 
 /// Regex for position tags
-static POSITION_TAG_REGEX: Lazy<Regex> = Lazy::new(|| {
+static POSITION_TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\{\\an\d\}").expect("Invalid position tag regex")
 });
 
 /// Regex for language indicators like [IN SPANISH]
-static LANGUAGE_INDICATOR_REGEX: Lazy<Regex> = Lazy::new(|| {
+static LANGUAGE_INDICATOR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[[^\]]*(?:IN|EN|À|AU|DE)\s+[^\]]*\]").expect("Invalid language indicator regex")
 });
 

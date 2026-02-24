@@ -26,6 +26,7 @@ mod errors;
 mod database;
 mod session;
 mod validation;
+mod utils;
 
 /// CLI Wrapper for TranslationProvider to implement ValueEnum
 #[derive(Debug, Clone, ValueEnum)]
@@ -189,7 +190,7 @@ struct TranslateArgs {
 #[derive(Parser, Debug)]
 #[command(name = "yastwai")]
 #[command(author = "YASTwAI Team")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "AI-powered subtitle translation tool")]
 #[command(long_about = "YASTwAI extracts subtitles from video files and translates them using AI providers.
 
@@ -706,7 +707,7 @@ async fn extraction_only_mode(input_file: &Path, output_dir: PathBuf, language_c
     
     // Create output filename
     let track_info = tracks.iter().find(|t| t.index == track_id)
-        .expect("Track should exist");
+        .ok_or_else(|| anyhow!("Selected track index {} not found in track list", track_id))?;
     
     // Determine the language code to use in the output filename
     let output_lang_code = if let Some(requested_lang) = language_code {
@@ -717,8 +718,10 @@ async fn extraction_only_mode(input_file: &Path, output_dir: PathBuf, language_c
         track_info.language.as_deref().unwrap_or("unknown").to_lowercase()
     };
     
-    let output_filename = format!("{}.{}.srt", 
-        input_file.file_stem().unwrap().to_string_lossy(),
+    let output_filename = format!("{}.{}.srt",
+        input_file.file_stem()
+            .ok_or_else(|| anyhow!("Input file has no file stem: {:?}", input_file))?
+            .to_string_lossy(),
         output_lang_code);
     
     let output_file = output_dir.join(output_filename);

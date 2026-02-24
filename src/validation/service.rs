@@ -5,9 +5,6 @@
  * checks on translated subtitles.
  */
 
-// Public API - may not be used internally
-#![allow(dead_code)]
-
 use log::debug;
 use serde::{Deserialize, Serialize};
 
@@ -579,8 +576,7 @@ mod tests {
 
         let result = service.validate_entry(&source, &translated);
 
-        // Should have a warning but still pass (format issues are warnings)
-        assert!(result.passed || !result.passed); // Depends on config
+        // Should have a warning about the missing position tag
         assert!(!result.issues.is_empty());
     }
 

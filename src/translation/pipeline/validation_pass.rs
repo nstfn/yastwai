@@ -510,7 +510,7 @@ impl ValidationReport {
 
         // Count unique entries with issues
         let mut entry_ids: Vec<usize> = self.issues.iter().map(|i| i.entry_id()).collect();
-        entry_ids.sort();
+        entry_ids.sort_unstable();
         entry_ids.dedup();
         self.entries_with_issues = entry_ids.len();
     }

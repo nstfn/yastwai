@@ -39,11 +39,6 @@
  * This project is licensed under the MIT License
  */
 
-// Global lints configuration
-#![allow(clippy::uninlined_format_args)]
-#![allow(clippy::redundant_closure_for_method_calls)]
-// Public API re-exports may not be used internally
-#![allow(unused_imports)]
 
 // Public modules
 pub mod app_config;
@@ -57,6 +52,7 @@ pub mod errors;
 pub mod database;
 pub mod session;
 pub mod validation;
+pub mod utils;
 
 // Re-export main types for easier usage
 pub use app_config::{Config, SessionConfig, CacheConfig, ValidationConfig};

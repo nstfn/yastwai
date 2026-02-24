@@ -60,6 +60,18 @@ impl ConsistencyConfig {
         }
     }
 
+    /// Create a lenient config that checks less strictly.
+    pub fn lenient() -> Self {
+        Self {
+            check_terminology: true,
+            check_style: false,
+            check_names: true,
+            check_punctuation: false,
+            min_occurrences_for_flag: 3,
+            case_sensitive: false,
+        }
+    }
+
     /// Create a minimal config for speed.
     pub fn minimal() -> Self {
         Self {
@@ -240,7 +252,7 @@ impl ConsistencyReport {
     /// Get issues by severity (highest first).
     pub fn issues_by_severity(&self) -> Vec<&StyleIssue> {
         let mut sorted: Vec<_> = self.issues.iter().collect();
-        sorted.sort_by(|a, b| b.severity().partial_cmp(&a.severity()).unwrap());
+        sorted.sort_by(|a, b| b.severity().partial_cmp(&a.severity()).unwrap_or(std::cmp::Ordering::Equal));
         sorted
     }
 

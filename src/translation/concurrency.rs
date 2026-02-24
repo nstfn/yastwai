@@ -5,9 +5,6 @@
  * such as rate limits, response times, and API constraints.
  */
 
-// Allow dead code - some fields are for future use
-#![allow(dead_code)]
-
 use crate::app_config::TranslationProvider;
 
 /// Provider-specific concurrency profile with tuned defaults
@@ -66,7 +63,6 @@ impl ProviderProfile {
     }
 
     /// Get effective concurrent requests, respecting any user override
-    #[allow(dead_code)]
     pub fn effective_concurrent_requests(&self, user_override: Option<usize>) -> usize {
         user_override.unwrap_or(self.max_concurrent_requests)
     }

@@ -14,9 +14,6 @@
  * - Configurable via `parallel_entries_per_request` and `max_concurrent_requests`
  */
 
-// Allow dead code - some batch strategies are experimental
-#![allow(dead_code)]
-
 use anyhow::{anyhow, Result};
 use log::{debug, error};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -331,9 +328,7 @@ impl BatchTranslator {
         C: Fn(Vec<SubtitleEntry>) + Clone + Send + Sync + 'static,
     {
         // Flatten all batches into a single list of entries
-        let all_entries: Vec<SubtitleEntry> = batches.iter()
-            .flat_map(|batch| batch.iter().cloned())
-            .collect();
+        let all_entries: Vec<SubtitleEntry> = batches.iter().flat_map(|batch| batch.iter().cloned()).collect();
         
         let total_entries = all_entries.len();
         if total_entries == 0 {

@@ -7,6 +7,12 @@ use std::io::Write;
 use chrono::Local;
 use tokio::process::Command;
 use regex::Regex;
+use std::sync::LazyLock;
+
+/// Regex for detecting SRT subtitle format
+static SRT_FORMAT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\d+\s*\r?\n\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}").unwrap()
+});
 
 // @module: File and directory utilities
 
@@ -15,13 +21,11 @@ pub struct FileManager;
 
 impl FileManager {
     /// Checks file existence - used by tests
-    #[allow(dead_code)]
     pub fn file_exists<P: AsRef<Path>>(path: P) -> bool {
         path.as_ref().exists() && path.as_ref().is_file()
     }
     
     /// Checks directory existence - used by tests
-    #[allow(dead_code)]
     pub fn dir_exists<P: AsRef<Path>>(path: P) -> bool {
         path.as_ref().exists() && path.as_ref().is_dir()
     }
@@ -36,7 +40,6 @@ impl FileManager {
     }
     
     /// Generates output path for translated subtitle - used by tests
-    #[allow(dead_code)]
     pub fn generate_output_path<P1: AsRef<Path>, P2: AsRef<Path>>(
         input_file: P1,
         output_dir: P2,
@@ -106,7 +109,6 @@ impl FileManager {
     }
     
     /// Copy a file from one location to another - used by tests
-    #[allow(dead_code)]
     pub fn copy_file<P1: AsRef<Path>, P2: AsRef<Path>>(from: P1, to: P2) -> Result<()> {
         let from = from.as_ref();
         let to = to.as_ref();
@@ -127,7 +129,6 @@ impl FileManager {
     }
     
     /// Append content to a log file with timestamp - utility method
-    #[allow(dead_code)]
     pub fn append_to_log_file<P: AsRef<Path>>(path: P, content: &str) -> Result<()> {
         // Get current timestamp
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -216,8 +217,7 @@ impl FileManager {
             // Check for SRT format pattern (sequence number followed by timestamp)
             if content.contains("-->") {
                 // Simple check for SRT format: contains "-->" and has a pattern of numbers followed by timestamps
-                let re = Regex::new(r"\d+\s*\r?\n\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}").unwrap();
-                if re.is_match(&content) {
+                if SRT_FORMAT_REGEX.is_match(&content) {
                     return Ok(FileType::Subtitle);
                 }
             }

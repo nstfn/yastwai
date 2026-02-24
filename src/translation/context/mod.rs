@@ -6,9 +6,6 @@
  * - Glossary extraction for terminology consistency
  */
 
-// Allow dead code in experimental context modules
-#![allow(dead_code)]
-
 pub mod dynamic;
 pub mod fuzzy;
 pub mod glossary;

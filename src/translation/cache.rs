@@ -9,9 +9,6 @@
  * especially for repeated translations of common phrases.
  */
 
-// Allow dead code - some cache methods are for future use
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -453,7 +450,7 @@ fn truncate_text(text: &str, max_length: usize) -> String {
     if text.len() <= max_length {
         text.to_string()
     } else {
-        format!("{}...", &text[..max_length])
+        format!("{}...", crate::utils::truncate_utf8(text, max_length))
     }
 }
 

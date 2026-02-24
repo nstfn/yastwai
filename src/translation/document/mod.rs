@@ -8,8 +8,6 @@
  * - Translation state management
  */
 
-#![allow(dead_code)]
-
 pub mod model;
 
 // Re-export types used by other modules

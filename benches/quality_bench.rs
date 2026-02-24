@@ -12,12 +12,11 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use yastwai::subtitle_processor::SubtitleEntry;
 use yastwai::translation::{
-    ConsistencyChecker, ConsistencyConfig, ErrorRecovery, Glossary, QualityMetrics,
-    QualityThresholds, RecoveryStrategy, RepairEngine, SubtitleDocument, TranslationError,
-    TranslationErrorKind,
+    ConsistencyChecker, ConsistencyConfig, EntryMetrics, ErrorRecovery, Glossary, MetricsData,
+    QualityMetrics, QualityThresholds, RecoveryStrategy, RepairConfig, RepairEngine,
+    SubtitleDocument, TranslationPipelineError as TranslationError, TranslationErrorKind,
 };
-use yastwai::translation::quality::metrics::{EntryMetrics, MetricsData};
-use yastwai::translation::quality::repair::RepairConfig;
+use yastwai::translation::document::DocumentEntry;
 
 /// Generate a document for benchmarking.
 fn generate_document(count: usize, with_issues: bool) -> SubtitleDocument {
@@ -137,14 +136,14 @@ fn bench_thresholds_comparison(c: &mut Criterion) {
     c.bench_function("thresholds_strict_check", |b| {
         let thresholds = QualityThresholds::strict();
         b.iter(|| {
-            black_box(score.meets_thresholds(&thresholds))
+            black_box(score.meets_threshold(thresholds.min_overall))
         });
     });
 
     c.bench_function("thresholds_lenient_check", |b| {
         let thresholds = QualityThresholds::lenient();
         b.iter(|| {
-            black_box(score.meets_thresholds(&thresholds))
+            black_box(score.meets_threshold(thresholds.min_overall))
         });
     });
 }
@@ -198,7 +197,9 @@ fn bench_consistency_lenient(c: &mut Criterion) {
 
 fn bench_repair_single_entry(c: &mut Criterion) {
     let entry = {
-        let mut e = SubtitleEntry::new(1, 0, 2500, "<i>Important text here</i>".to_string());
+        let mut e = DocumentEntry::from_subtitle_entry(
+            SubtitleEntry::new(1, 0, 2500, "<i>Important text here</i>".to_string()),
+        );
         e.set_translation("Texte important ici".to_string(), Some(0.9)); // Missing formatting
         e
     };
@@ -214,8 +215,9 @@ fn bench_repair_single_entry(c: &mut Criterion) {
 
 fn bench_repair_with_glossary(c: &mut Criterion) {
     let entry = {
-        let mut e =
-            SubtitleEntry::new(1, 0, 2500, "Go to the extraction point.".to_string());
+        let mut e = DocumentEntry::from_subtitle_entry(
+            SubtitleEntry::new(1, 0, 2500, "Go to the extraction point.".to_string()),
+        );
         e.set_translation("Allez au extraction point.".to_string(), Some(0.9)); // Term not translated
         e
     };
@@ -342,13 +344,7 @@ fn bench_error_summary(c: &mut Criterion) {
 }
 
 fn bench_recovery_strategy_custom(c: &mut Criterion) {
-    let strategy = RecoveryStrategy {
-        max_retries: 5,
-        initial_delay_ms: 500,
-        max_delay_ms: 30000,
-        backoff_multiplier: 2.0,
-        use_fallback: true,
-    };
+    let strategy = RecoveryStrategy::aggressive();
 
     let error = TranslationError::new(TranslationErrorKind::Network, "Connection failed");
 

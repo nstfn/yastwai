@@ -6,16 +6,36 @@
  */
 
 use regex::Regex;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 /// Positional tag regex ({\an8} etc.)
-static POSITION_TAG_REGEX: Lazy<Regex> = Lazy::new(|| {
+static POSITION_TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(\{\\an\d\})").unwrap()
 });
 
 /// Language indicator regex ([IN SPANISH], [EN FRANÇAIS], etc.)
-static LANGUAGE_INDICATOR_REGEX: Lazy<Regex> = Lazy::new(|| {
+static LANGUAGE_INDICATOR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[([^]]*?)(IN|EN|À|AU|AUX|DE)\s+([^]]*?)\]").unwrap()
+});
+
+/// Doubled italic tag regex
+static DOUBLED_ITALIC_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<i><i>([^<]*)</i></i>").unwrap()
+});
+
+/// Doubled bold tag regex
+static DOUBLED_BOLD_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<b><b>([^<]*)</b></b>").unwrap()
+});
+
+/// Doubled underline tag regex
+static DOUBLED_UNDERLINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<u><u>([^<]*)</u></u>").unwrap()
+});
+
+/// Fallback regex for empty brackets
+static EMPTY_BRACKET_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[\]").unwrap()
 });
 
 /// Format preserver for maintaining text formatting during translation
@@ -98,21 +118,18 @@ impl FormatPreserver {
         
         let mut result = translated.to_string();
         
-        // Create a fallback regex outside the loop to avoid creating it inside the loop
-        let fallback_regex = Regex::new(r"\[\]").unwrap();
-        
         for cap in language_indicators {
             if cap.len() >= 4 {
                 let full_match = cap.get(0).unwrap().as_str();
                 let prefix = cap.get(1).map_or("", |m| m.as_str());
                 let indicator = cap.get(2).unwrap().as_str();
                 let _language = cap.get(3).unwrap().as_str();
-                
+
                 // Preserve the exact original language indicator
                 if result.contains(full_match) {
                     continue;
                 }
-                
+
                 // Look for a translated version of the language indicator
                 let translated_indicator = match indicator {
                     "IN" => "EN",
@@ -123,11 +140,11 @@ impl FormatPreserver {
                     "DE" => "DE",
                     _ => indicator,
                 };
-                
+
                 // Create regex to find the translated language indicator
                 let pattern = format!(r"\[{prefix}?{translated_indicator}\s+[^]]*?\]");
-                let translated_regex = Regex::new(&pattern).unwrap_or_else(|_| fallback_regex.clone());
-                
+                let translated_regex = Regex::new(&pattern).unwrap_or_else(|_| EMPTY_BRACKET_REGEX.clone());
+
                 if let Some(m) = translated_regex.find(&result) {
                     // Replace the translated language indicator with the original one
                     let before = &result[..m.start()];
@@ -236,19 +253,16 @@ impl FormatPreserver {
     /// Fix doubled formatting tags like <i><i>...</i></i>
     pub fn fix_doubled_formatting_tags(text: &str) -> String {
         let mut result = text.to_string();
-        
+
         // Fix doubled italic tags
-        let doubled_italic_regex = Regex::new(r"<i><i>([^<]*)</i></i>").unwrap();
-        result = doubled_italic_regex.replace_all(&result, "<i>$1</i>").to_string();
-        
+        result = DOUBLED_ITALIC_REGEX.replace_all(&result, "<i>$1</i>").to_string();
+
         // Fix doubled bold tags
-        let doubled_bold_regex = Regex::new(r"<b><b>([^<]*)</b></b>").unwrap();
-        result = doubled_bold_regex.replace_all(&result, "<b>$1</b>").to_string();
-        
+        result = DOUBLED_BOLD_REGEX.replace_all(&result, "<b>$1</b>").to_string();
+
         // Fix doubled underline tags
-        let doubled_underline_regex = Regex::new(r"<u><u>([^<]*)</u></u>").unwrap();
-        result = doubled_underline_regex.replace_all(&result, "<u>$1</u>").to_string();
-        
+        result = DOUBLED_UNDERLINE_REGEX.replace_all(&result, "<u>$1</u>").to_string();
+
         result
     }
 } 

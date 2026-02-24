@@ -4,6 +4,11 @@ use anyhow::{Result, anyhow, Context};
 use reqwest::Client;
 use log::error;
 
+use crate::errors::ProviderError;
+use super::{Provider, Role, TranslationRequest, TranslationResponse};
+use super::http_client::build_provider_client;
+use super::retry::RetryPolicy;
+
 /// OpenAI client for interacting with OpenAI API
 pub struct OpenAI {
     /// HTTP client for API requests
@@ -69,9 +74,9 @@ pub struct OpenAIResponseFormat {
 /// OpenAI message format
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OpenAIMessage {
-    /// Role of the message sender (system, user, assistant)
-    pub role: String,
-    
+    /// Role of the message sender
+    pub role: Role,
+
     /// Content of the message
     pub content: String,
 }
@@ -84,7 +89,6 @@ pub struct TokenUsage {
     /// Number of completion tokens
     pub completion_tokens: u32,
     /// Total number of tokens - required by API response format
-    #[allow(dead_code)]
     pub total_tokens: u32,
 }
 
@@ -126,8 +130,7 @@ impl Default for OpenAIRequest {
     }
 }
 
-/// Builder methods for OpenAIRequest - API surface for library consumers
-#[allow(dead_code)]
+/// Builder methods for OpenAIRequest
 impl OpenAIRequest {
     /// Create a new OpenAI request
     pub fn new(model: impl Into<String>) -> Self {
@@ -138,9 +141,9 @@ impl OpenAIRequest {
     }
     
     /// Add a message to the request
-    pub fn add_message(mut self, role: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn add_message(mut self, role: Role, content: impl Into<String>) -> Self {
         self.messages.push(OpenAIMessage {
-            role: role.into(),
+            role,
             content: content.into(),
         });
         self
@@ -191,8 +194,6 @@ impl OpenAIRequest {
     }
 }
 
-/// OpenAI client implementation - some methods are API surface for library consumers
-#[allow(dead_code)]
 impl OpenAI {
     /// Create a new OpenAI client
     pub fn new(api_key: impl Into<String>, endpoint: impl Into<String>) -> Self {
@@ -346,8 +347,8 @@ impl OpenAI {
         max_tokens: u32,
     ) -> Result<T> {
         let request = OpenAIRequest::new(model)
-            .add_message("system", system_prompt)
-            .add_message("user", user_prompt)
+            .add_message(Role::System, system_prompt)
+            .add_message(Role::User, user_prompt)
             .temperature(temperature)
             .max_tokens(max_tokens)
             .json_response_format();
@@ -365,4 +366,173 @@ impl OpenAI {
         serde_json::from_str(content)
             .with_context(|| format!("Failed to parse JSON response: {}", content))
     }
-} 
+}
+
+impl std::fmt::Debug for OpenAI {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAI")
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OpenAICompatible — unified provider for OpenAI, LM Studio, and vLLM
+// ---------------------------------------------------------------------------
+
+/// Unified provider for any server using the OpenAI chat-completions API.
+///
+/// Handles OpenAI, LM Studio, and vLLM with a single implementation.
+#[derive(Debug)]
+pub struct OpenAICompatible {
+    client: Client,
+    endpoint: String,
+    api_key: Option<String>,
+    retry: RetryPolicy,
+    name: &'static str,
+}
+
+impl OpenAICompatible {
+    /// Create a new OpenAI-compatible provider.
+    ///
+    /// # Arguments
+    /// * `endpoint` - Base URL (e.g. "https://api.openai.com/v1" or "http://localhost:8000/v1")
+    /// * `api_key` - API key (pass empty string for no auth)
+    /// * `max_retries` - Max retry attempts
+    /// * `backoff_base_ms` - Base backoff in ms
+    /// * `name` - Provider label ("OpenAI", "LM Studio", "vLLM")
+    /// * `timeout_secs` - HTTP timeout
+    /// * `pool_size` - Connection pool size
+    pub fn new(
+        endpoint: impl Into<String>,
+        api_key: impl Into<String>,
+        max_retries: u32,
+        backoff_base_ms: u64,
+        name: &'static str,
+        timeout_secs: u64,
+        pool_size: usize,
+    ) -> Self {
+        let api_key_str = api_key.into();
+        Self {
+            client: build_provider_client(timeout_secs, pool_size, true),
+            endpoint: endpoint.into(),
+            api_key: if api_key_str.is_empty() { None } else { Some(api_key_str) },
+            retry: RetryPolicy::new(max_retries, backoff_base_ms),
+            name,
+        }
+    }
+
+    /// Build the chat completions URL.
+    fn api_url(&self) -> String {
+        let base = self.endpoint.trim_end_matches('/');
+        if base.is_empty() {
+            "https://api.openai.com/v1/chat/completions".to_string()
+        } else {
+            format!("{}/chat/completions", base)
+        }
+    }
+
+    /// Send a single HTTP request to the chat completions endpoint.
+    async fn send_chat_request(
+        &self,
+        request: &OpenAIRequest,
+    ) -> Result<OpenAIResponse, ProviderError> {
+        let api_url = self.api_url();
+
+        let mut req_builder = self.client.post(&api_url)
+            .header("Content-Type", "application/json");
+
+        if let Some(ref key) = self.api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+
+        let response = req_builder
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    ProviderError::ConnectionError(format!("Request timed out: {}", e))
+                } else if e.is_connect() {
+                    ProviderError::ConnectionError(format!("Connection failed: {}", e))
+                } else {
+                    ProviderError::RequestFailed(e.to_string())
+                }
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await
+                .unwrap_or_else(|_| "Failed to get error response text".to_string());
+
+            return match status.as_u16() {
+                429 => Err(ProviderError::RateLimitExceeded {
+                    message: error_text,
+                    retry_after_secs: None,
+                }),
+                401 | 403 => Err(ProviderError::AuthenticationError(error_text)),
+                code if code >= 500 => Err(ProviderError::ApiError {
+                    status_code: code,
+                    message: error_text,
+                }),
+                code => Err(ProviderError::ApiError {
+                    status_code: code,
+                    message: error_text,
+                }),
+            };
+        }
+
+        response.json::<OpenAIResponse>().await
+            .map_err(|e| ProviderError::ParseError(e.to_string()))
+    }
+}
+
+impl Provider for OpenAICompatible {
+    fn translate<'a>(
+        &'a self,
+        request: &'a TranslationRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TranslationResponse, ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            let oai_request = OpenAIRequest::new(&request.model)
+                .add_message(Role::System, &request.system_prompt)
+                .add_message(Role::User, &request.user_prompt)
+                .temperature(request.temperature)
+                .max_tokens(request.max_tokens);
+
+            let response = self.retry.execute(|| async {
+                self.send_chat_request(&oai_request).await
+            }).await?;
+
+            let text = response.choices.first()
+                .map(|c| c.message.content.clone())
+                .unwrap_or_default();
+
+            let (input_tokens, output_tokens) = response.usage
+                .map(|u| (Some(u.prompt_tokens as u64), Some(u.completion_tokens as u64)))
+                .unwrap_or((None, None));
+
+            Ok(TranslationResponse {
+                text,
+                input_tokens,
+                output_tokens,
+            })
+        })
+    }
+
+    fn test_connection<'a>(
+        &'a self,
+        model: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            let request = OpenAIRequest::new(model)
+                .add_message(Role::User, "Hi")
+                .max_tokens(1);
+
+            self.send_chat_request(&request).await.map(|_| ())
+        })
+    }
+
+    fn provider_name(&self) -> &'static str {
+        self.name
+    }
+}

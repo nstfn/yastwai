@@ -1,6 +1,6 @@
 /*!
  * Core translation service implementation.
- * 
+ *
  * This module contains the main TranslationService struct and its implementation,
  * which is responsible for translating text using various AI providers.
  */
@@ -12,11 +12,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::app_config::{TranslationConfig, TranslationProvider as ConfigTranslationProvider, ExperimentalFeatures};
-use crate::providers::ollama::{Ollama, GenerationRequest};
-use crate::providers::openai::{OpenAI, OpenAIRequest};
-use crate::providers::anthropic::{Anthropic, AnthropicRequest};
-use crate::providers::vllm::{VLLM, VLLMRequest};
-use crate::providers::Provider;
+use crate::providers::ollama::Ollama;
+use crate::providers::openai::OpenAICompatible;
+use crate::providers::anthropic::Anthropic;
+use crate::providers::{Provider, TranslationRequest};
 use super::cache::TranslationCache;
 use super::concurrency::ProviderProfile;
 
@@ -26,22 +25,22 @@ use super::concurrency::ProviderProfile;
 pub struct TokenUsageStats {
     /// Number of prompt tokens
     pub prompt_tokens: u64,
-    
+
     /// Number of completion tokens
     pub completion_tokens: u64,
-    
+
     /// Total number of tokens
     pub total_tokens: u64,
-    
+
     /// Start time of token tracking
     pub start_time: Instant,
-    
+
     /// Total time spent on API requests
     pub api_duration: Duration,
-    
+
     /// Provider name
     pub provider: String,
-    
+
     /// Model name
     pub model: String,
 }
@@ -65,20 +64,20 @@ impl TokenUsageStats {
             model: String::new(),
         }
     }
-    
+
     /// Add token usage numbers for testing
     pub fn add_token_usage(&mut self, prompt_tokens: Option<u64>, completion_tokens: Option<u64>) {
         if let Some(pt) = prompt_tokens {
             self.prompt_tokens += pt;
             self.total_tokens += pt;
         }
-        
+
         if let Some(ct) = completion_tokens {
             self.completion_tokens += ct;
             self.total_tokens += ct;
         }
     }
-    
+
     /// Create new token usage stats with provider info
     pub fn with_provider_info(provider: String, model: String) -> Self {
         Self {
@@ -91,29 +90,28 @@ impl TokenUsageStats {
             model,
         }
     }
-    
+
     /// Calculate tokens per minute rate
     pub fn tokens_per_minute(&self) -> f64 {
-        // Use the API duration for rate calculation, with fallback to elapsed time
         let duration_minutes = if self.api_duration.as_secs_f64() > 0.0 {
             self.api_duration.as_secs_f64() / 60.0
         } else {
             self.start_time.elapsed().as_secs_f64() / 60.0
         };
-        
+
         if duration_minutes > 0.0 {
             self.total_tokens as f64 / duration_minutes
         } else {
             0.0
         }
     }
-    
+
     /// Generate a summary of token usage
     pub fn summary(&self) -> String {
         let elapsed = self.start_time.elapsed();
         let elapsed_minutes = elapsed.as_secs_f64() / 60.0;
         let api_minutes = self.api_duration.as_secs_f64() / 60.0;
-        
+
         format!(
             "Token Usage Summary:\n\
              Provider: {}\n\
@@ -141,63 +139,30 @@ fn parse_endpoint(endpoint: &str) -> Result<(String, u16)> {
     if endpoint.is_empty() {
         return Err(anyhow!("Endpoint cannot be empty"));
     }
-    
+
     let url = if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
         Url::parse(endpoint)?
     } else {
         Url::parse(&format!("http://{}", endpoint))?
     };
-    
+
     let host = url.host_str()
         .ok_or_else(|| anyhow!("Invalid host in endpoint: {}", endpoint))?
         .to_string();
-    
+
     let port = url.port().unwrap_or(if url.scheme() == "https" { 443 } else { 80 });
-    
+
     Ok((host, port))
-}
-
-/// Translation provider implementation variants
-enum TranslationProviderImpl {
-    /// Ollama LLM service
-    Ollama {
-        /// Client instance
-        client: Ollama,
-    },
-
-    /// OpenAI API service
-    OpenAI {
-        /// Client instance
-        client: OpenAI,
-    },
-
-    /// LM Studio local server (OpenAI-compatible)
-    LMStudio {
-        /// Client instance (OpenAI-compatible)
-        client: OpenAI,
-    },
-
-    /// Anthropic API service
-    Anthropic {
-        /// Client instance
-        client: Anthropic,
-    },
-
-    /// vLLM high-throughput inference server
-    VLLM {
-        /// Client instance
-        client: VLLM,
-    },
 }
 
 /// Translation options for customizing the translation process
 pub struct TranslationOptions {
     /// Whether to preserve formatting in the translated text
     pub preserve_formatting: bool,
-    
+
     /// Maximum number of concurrent requests
     pub max_concurrent_requests: usize,
-    
+
     /// Whether to retry individual entries on batch failure
     pub retry_individual_entries: bool,
 }
@@ -221,15 +186,15 @@ pub struct LogEntry {
 
 /// Main translation service for subtitle translation
 pub struct TranslationService {
-    /// Provider implementation
-    provider: TranslationProviderImpl,
-    
+    /// Provider implementation (shared via Arc for cheap cloning)
+    provider: Arc<dyn Provider>,
+
     /// Configuration for the translation service
     pub config: TranslationConfig,
-    
+
     /// Translation options
     pub options: TranslationOptions,
-    
+
     /// Translation cache for storing and retrieving translations
     pub cache: TranslationCache,
 }
@@ -237,102 +202,79 @@ pub struct TranslationService {
 impl TranslationService {
     /// Create a new translation service with the given configuration
     pub fn new(config: TranslationConfig) -> Result<Self> {
-        let provider = match config.provider {
+        let retry_count = config.common.retry_count;
+        let retry_backoff_ms = config.common.retry_backoff_ms;
+
+        let provider: Arc<dyn Provider> = match config.provider {
             ConfigTranslationProvider::Ollama => {
                 let (host, port) = parse_endpoint(&config.get_endpoint())?;
-                let retry_count = config.common.retry_count;
-                let retry_backoff_ms = config.common.retry_backoff_ms;
                 let rate_limit = config.get_rate_limit();
-                
-                TranslationProviderImpl::Ollama {
-                    client: Ollama::new_with_config(&host, port, retry_count, retry_backoff_ms, rate_limit),
-                }
+                Arc::new(Ollama::new_with_config(&host, port, retry_count, retry_backoff_ms, rate_limit))
             },
             ConfigTranslationProvider::OpenAI => {
-                let retry_count = config.common.retry_count;
-                let retry_backoff_ms = config.common.retry_backoff_ms;
-                let rate_limit = config.get_rate_limit();
-                
-                TranslationProviderImpl::OpenAI {
-                    client: OpenAI::new_with_config(
-                        config.get_api_key(), 
-                        config.get_endpoint(),
-                        retry_count,
-                        retry_backoff_ms,
-                        rate_limit
-                    ),
-                }
+                Arc::new(OpenAICompatible::new(
+                    config.get_endpoint(),
+                    config.get_api_key(),
+                    retry_count,
+                    retry_backoff_ms,
+                    "OpenAI",
+                    120,
+                    20,
+                ))
             },
             ConfigTranslationProvider::LMStudio => {
-                let retry_count = config.common.retry_count;
-                let retry_backoff_ms = config.common.retry_backoff_ms;
-                let rate_limit = config.get_rate_limit();
-                // LM Studio often doesn't require an API key; use a default if empty
                 let api_key = {
                     let k = config.get_api_key();
                     if k.is_empty() { "lm-studio".to_string() } else { k }
                 };
-                
-                TranslationProviderImpl::LMStudio {
-                    client: OpenAI::new_with_config(
-                        api_key,
-                        config.get_endpoint(),
-                        retry_count,
-                        retry_backoff_ms,
-                        rate_limit,
-                    ),
-                }
+                Arc::new(OpenAICompatible::new(
+                    config.get_endpoint(),
+                    api_key,
+                    retry_count,
+                    retry_backoff_ms,
+                    "LM Studio",
+                    120,
+                    20,
+                ))
             },
             ConfigTranslationProvider::Anthropic => {
-                // Get retry and rate limit configuration from the config
                 let rate_limit = config.get_rate_limit();
-                let retry_count = config.common.retry_count;
-                let retry_backoff_ms = config.common.retry_backoff_ms;
-
-                TranslationProviderImpl::Anthropic {
-                    client: Anthropic::new_with_config(
-                        config.get_api_key(),
-                        config.get_endpoint(),
-                        retry_count,
-                        retry_backoff_ms,
-                        rate_limit,
-                    ),
-                }
+                Arc::new(Anthropic::new_with_config(
+                    config.get_api_key(),
+                    config.get_endpoint(),
+                    retry_count,
+                    retry_backoff_ms,
+                    rate_limit,
+                ))
             },
             ConfigTranslationProvider::VLLM => {
-                let retry_count = config.common.retry_count;
-                let retry_backoff_ms = config.common.retry_backoff_ms;
-
-                TranslationProviderImpl::VLLM {
-                    client: VLLM::new_with_config(
-                        config.get_endpoint(),
-                        config.get_api_key(),
-                        retry_count,
-                        retry_backoff_ms,
-                    ),
-                }
+                Arc::new(OpenAICompatible::new(
+                    config.get_endpoint(),
+                    config.get_api_key(),
+                    retry_count,
+                    retry_backoff_ms,
+                    "vLLM",
+                    180,
+                    32,
+                ))
             },
         };
-        
-        // Create options that use config-driven concurrency settings
+
         let options = TranslationOptions {
             preserve_formatting: true,
             max_concurrent_requests: config.optimal_concurrent_requests(),
             retry_individual_entries: true,
         };
-        
+
         Ok(Self {
             provider,
             config,
             options,
-            cache: TranslationCache::new(true), // Enable cache by default
+            cache: TranslationCache::new(true),
         })
     }
 
     /// Apply experimental features settings to the service
-    ///
-    /// When `enable_auto_tune_concurrency` is true, uses provider-specific
-    /// concurrency profiles for optimal throughput.
     pub fn with_experimental_features(mut self, features: &ExperimentalFeatures) -> Self {
         if features.enable_auto_tune_concurrency {
             let profile = ProviderProfile::for_provider(self.config.provider.clone());
@@ -343,185 +285,71 @@ impl TranslationService {
 
     /// Test the connection to the translation provider
     pub async fn test_connection(
-        &self, 
-        source_language: &str, 
-        target_language: &str,
+        &self,
+        _source_language: &str,
+        _target_language: &str,
         log_capture: Option<Arc<Mutex<Vec<LogEntry>>>>
     ) -> Result<()> {
-        // Log the test attempt
         if let Some(log) = &log_capture {
             log.lock().await.push(LogEntry {
                 level: "INFO".to_string(),
-                message: format!("Testing connection to {:?} with model {}", 
-                                self.config.provider, self.config.get_model()),
+                message: format!("Testing connection to {} with model {}",
+                                self.provider.provider_name(), self.config.get_model()),
             });
         }
-        
-        match &self.provider {
-            TranslationProviderImpl::Ollama { client } => {
-                let result = client.version().await;
-                match result {
-                    Ok(_version) => {
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "INFO".to_string(),
-                                message: "Successfully connected to Ollama".to_string(),
-                            });
-                        }
-                        Ok(())
-                    },
-                    Err(e) => {
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "ERROR".to_string(),
-                                message: format!("Failed to connect to Ollama: {}", e),
-                            });
-                        }
-                        Err(anyhow!("Failed to connect to Ollama: {}", e))
-                    }
+
+        let result = self.provider.test_connection(&self.config.get_model()).await;
+
+        match result {
+            Ok(()) => {
+                if let Some(log) = &log_capture {
+                    log.lock().await.push(LogEntry {
+                        level: "INFO".to_string(),
+                        message: format!("Successfully connected to {}", self.provider.provider_name()),
+                    });
                 }
+                Ok(())
             },
-            TranslationProviderImpl::OpenAI { client: _ } => {
-                // For OpenAI, we'll do a simple test translation
-                let test_result = self.test_translation(source_language, target_language).await;
-                match test_result {
-                    Ok(_) => {
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "INFO".to_string(),
-                                message: "Successfully connected to OpenAI API".to_string(),
-                            });
-                        }
-                        Ok(())
-                    },
-                    Err(e) => {
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "ERROR".to_string(),
-                                message: format!("Failed to connect to OpenAI API: {}", e),
-                            });
-                        }
-                        Err(anyhow!("Failed to connect to OpenAI API: {}", e))
-                    }
+            Err(e) => {
+                let msg = format!("Failed to connect to {}: {}", self.provider.provider_name(), e);
+                if let Some(log) = &log_capture {
+                    log.lock().await.push(LogEntry {
+                        level: "ERROR".to_string(),
+                        message: msg.clone(),
+                    });
                 }
-            },
-            TranslationProviderImpl::LMStudio { client: _ } => {
-                // For LM Studio (OpenAI-compatible), perform a simple test translation
-                let test_result = self.test_translation(source_language, target_language).await;
-                match test_result {
-                    Ok(_) => {
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "INFO".to_string(),
-                                message: "Successfully connected to LM Studio".to_string(),
-                            });
-                        }
-                        Ok(())
-                    },
-                    Err(e) => {
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "ERROR".to_string(),
-                                message: format!("Failed to connect to LM Studio: {}", e),
-                            });
-                        }
-                        Err(anyhow!("Failed to connect to LM Studio: {}", e))
-                    }
-                }
-            },
-            TranslationProviderImpl::Anthropic { client: _ } => {
-                // For Anthropic, we'll do a simple test translation
-                let test_result = self.test_translation(source_language, target_language).await;
-                match test_result {
-                    Ok(_) => {
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "INFO".to_string(),
-                                message: "Successfully connected to Anthropic API".to_string(),
-                            });
-                        }
-                        Ok(())
-                    },
-                    Err(e) => {
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "ERROR".to_string(),
-                                message: format!("Failed to connect to Anthropic API: {}", e),
-                            });
-                        }
-                        Err(anyhow!("Failed to connect to Anthropic API: {}", e))
-                    }
-                }
-            },
-            TranslationProviderImpl::VLLM { client } => {
-                // For vLLM, use the health check endpoint first, then test translation
-                let health_result = client.health_check().await;
-                match health_result {
-                    Ok(_) => {
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "INFO".to_string(),
-                                message: "Successfully connected to vLLM server".to_string(),
-                            });
-                        }
-                        Ok(())
-                    },
-                    Err(_) => {
-                        // Health check may not be available, try test translation instead
-                        let test_result = self.test_translation(source_language, target_language).await;
-                        match test_result {
-                            Ok(_) => {
-                                if let Some(log) = &log_capture {
-                                    log.lock().await.push(LogEntry {
-                                        level: "INFO".to_string(),
-                                        message: "Successfully connected to vLLM server".to_string(),
-                                    });
-                                }
-                                Ok(())
-                            },
-                            Err(e) => {
-                                if let Some(log) = &log_capture {
-                                    log.lock().await.push(LogEntry {
-                                        level: "ERROR".to_string(),
-                                        message: format!("Failed to connect to vLLM server: {}", e),
-                                    });
-                                }
-                                Err(anyhow!("Failed to connect to vLLM server: {}", e))
-                            }
-                        }
-                    }
-                }
+                Err(anyhow!(msg))
             }
         }
     }
-    
+
     /// Test translation by translating a simple test phrase
     pub async fn test_translation(&self, source_language: &str, target_language: &str) -> Result<String> {
         let test_text = format!("This is a test message from English to {}.", target_language);
         self.translate_text(&test_text, source_language, target_language).await
     }
-    
+
     /// Translate a single text string
     pub async fn translate_text(&self, text: &str, source_language: &str, target_language: &str) -> Result<String> {
         let (translated, _) = self.translate_text_with_usage(text, source_language, target_language, None).await?;
         Ok(translated)
     }
-    
+
     /// Translate text with token usage tracking
     pub async fn translate_text_with_usage(
-        &self, 
-        text: &str, 
-        source_language: &str, 
+        &self,
+        text: &str,
+        source_language: &str,
         target_language: &str,
         log_capture: Option<Arc<Mutex<Vec<LogEntry>>>>
     ) -> Result<(String, Option<(Option<u64>, Option<u64>, Option<Duration>)>)> {
         let start_time = Instant::now();
-        
+
         // Skip empty text
         if text.trim().is_empty() {
             return Ok((String::new(), None));
         }
-        
+
         // Check cache first
         if let Some(cached_translation) = self.cache.get(text, source_language, target_language).await {
             if let Some(log) = &log_capture {
@@ -530,9 +358,9 @@ impl TranslationService {
                     message: format!("Cache hit for translation ({} -> {})", source_language, target_language),
                 });
             }
-            return Ok((cached_translation, None)); // No token usage for cached results
+            return Ok((cached_translation, None));
         }
-        
+
         // Prepare system prompt
         let system_prompt = format!(
             "You are a professional translator. Translate the following text from {} to {}. \
@@ -540,215 +368,46 @@ impl TranslationService {
              Only respond with the translated text, without any explanations or notes.",
             source_language, target_language
         );
-        
-        match &self.provider {
-            TranslationProviderImpl::Ollama { client } => {
-                // Create generation request
-                let request = GenerationRequest::new(self.config.get_model(), text)
-                    .system(&system_prompt)
-                    .temperature(self.config.common.temperature);
-                
-                // Send request
-                let result = client.generate(request).await;
-                
-                match result {
-                    Ok(response) => {
-                        let duration = start_time.elapsed();
-                        
-                        // Log the response if requested
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "INFO".to_string(),
-                                message: format!("Ollama response received in {:?}", duration),
-                            });
-                        }
-                        
-                        // Extract the translated text
-                        let translated_text = response.response;
-                        
-                        // Store in cache
-                        self.cache.store(text, source_language, target_language, &translated_text).await;
-                        
-                        // Return the translated text and token usage (Ollama doesn't provide token counts)
-                        Ok((translated_text, Some((None, None, Some(duration)))))
-                    },
-                    Err(e) => {
-                        // Log the error if requested
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "ERROR".to_string(),
-                                message: format!("Ollama translation error: {}", e),
-                            });
-                        }
-                        
-                        Err(anyhow!("Ollama translation error: {}", e))
-                    }
+
+        let request = TranslationRequest {
+            model: self.config.get_model(),
+            system_prompt,
+            user_prompt: text.to_string(),
+            temperature: self.config.common.temperature,
+            max_tokens: self.max_tokens_for_model(&self.config.get_model()),
+        };
+
+        let provider_name = self.provider.provider_name();
+
+        match self.provider.translate(&request).await {
+            Ok(response) => {
+                let duration = start_time.elapsed();
+
+                if let Some(log) = &log_capture {
+                    log.lock().await.push(LogEntry {
+                        level: "INFO".to_string(),
+                        message: format!("{} response received in {:?}", provider_name, duration),
+                    });
                 }
+
+                // Store in cache
+                self.cache.store(text, source_language, target_language, &response.text).await;
+
+                Ok((response.text, Some((response.input_tokens, response.output_tokens, Some(duration)))))
             },
-            TranslationProviderImpl::OpenAI { client } | TranslationProviderImpl::LMStudio { client } => {
-                // Create OpenAI request
-                let request = OpenAIRequest::new(self.config.get_model())
-                    .add_message("system", &system_prompt)
-                    .add_message("user", text)
-                    .temperature(self.config.common.temperature)
-                    .max_tokens(self.max_tokens_for_model(&self.config.get_model()));
-                
-                // Send request
-                let result = client.complete(request).await;
-                
-                match result {
-                    Ok(response) => {
-                        let duration = start_time.elapsed();
-                        
-                        // Log the response if requested
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "INFO".to_string(),
-                                message: format!("OpenAI-compatible response received in {:?}", duration),
-                            });
-                        }
-                        
-                        // Extract the translated text
-                        let translated_text = if !response.choices.is_empty() {
-                            response.choices[0].message.content.clone()
-                        } else {
-                            return Err(anyhow!("OpenAI-compatible provider returned empty response"));
-                        };
-                        
-                        // Extract token usage
-                        let (prompt_tokens, completion_tokens) = if let Some(usage) = response.usage.as_ref() {
-                            (Some(usage.prompt_tokens as u64), Some(usage.completion_tokens as u64))
-                        } else {
-                            (None, None)
-                        };
-                        
-                        // Store in cache
-                        self.cache.store(text, source_language, target_language, &translated_text).await;
-                        
-                        // Return the translated text and token usage
-                        Ok((translated_text, Some((prompt_tokens, completion_tokens, Some(duration)))))
-                    },
-                    Err(e) => {
-                        // Log the error if requested
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "ERROR".to_string(),
-                                message: format!("OpenAI-compatible translation error: {}", e),
-                            });
-                        }
-                        
-                        Err(anyhow!("OpenAI-compatible translation error: {}", e))
-                    }
+            Err(e) => {
+                if let Some(log) = &log_capture {
+                    log.lock().await.push(LogEntry {
+                        level: "ERROR".to_string(),
+                        message: format!("{} translation error: {}", provider_name, e),
+                    });
                 }
-            },
-            TranslationProviderImpl::Anthropic { client } => {
-                // Create Anthropic request
-                let request = AnthropicRequest::new(self.config.get_model(), self.max_tokens_for_model(&self.config.get_model()))
-                    .system(&system_prompt)
-                    .add_message("user", text)
-                    .temperature(self.config.common.temperature);
 
-                // Send request
-                let result = client.complete(request).await;
-
-                match result {
-                    Ok(response) => {
-                        let duration = start_time.elapsed();
-
-                        // Log the response if requested
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "INFO".to_string(),
-                                message: format!("Anthropic response received in {:?}", duration),
-                            });
-                        }
-
-                        // Extract the translated text from the response
-                        // Extract the translated text
-                        let translated_text = Anthropic::extract_text(&response);
-
-                        // Get token usage
-                        let prompt_tokens = Some(response.usage.input_tokens as u64);
-                        let completion_tokens = Some(response.usage.output_tokens as u64);
-
-                        // Store in cache
-                        self.cache.store(text, source_language, target_language, &translated_text).await;
-
-                        // Return the translated text and token usage
-                        Ok((translated_text, Some((prompt_tokens, completion_tokens, Some(duration)))))
-                    },
-                    Err(e) => {
-                        // Log the error if requested
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "ERROR".to_string(),
-                                message: format!("Anthropic translation error: {}", e),
-                            });
-                        }
-
-                        Err(anyhow!("Anthropic translation error: {}", e))
-                    }
-                }
-            },
-            TranslationProviderImpl::VLLM { client } => {
-                // Create vLLM request
-                let request = VLLMRequest::new(self.config.get_model())
-                    .add_message("system", &system_prompt)
-                    .add_message("user", text)
-                    .temperature(self.config.common.temperature)
-                    .max_tokens(self.max_tokens_for_model(&self.config.get_model()));
-
-                // Send request
-                let result = client.complete(request).await;
-
-                match result {
-                    Ok(response) => {
-                        let duration = start_time.elapsed();
-
-                        // Log the response if requested
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "INFO".to_string(),
-                                message: format!("vLLM response received in {:?}", duration),
-                            });
-                        }
-
-                        // Extract the translated text
-                        let translated_text = if !response.choices.is_empty() {
-                            response.choices[0].message.content.clone()
-                        } else {
-                            return Err(anyhow!("vLLM returned empty response"));
-                        };
-
-                        // Extract token usage
-                        let (prompt_tokens, completion_tokens) = if let Some(usage) = response.usage.as_ref() {
-                            (Some(usage.prompt_tokens as u64), Some(usage.completion_tokens as u64))
-                        } else {
-                            (None, None)
-                        };
-
-                        // Store in cache
-                        self.cache.store(text, source_language, target_language, &translated_text).await;
-
-                        // Return the translated text and token usage
-                        Ok((translated_text, Some((prompt_tokens, completion_tokens, Some(duration)))))
-                    },
-                    Err(e) => {
-                        // Log the error if requested
-                        if let Some(log) = &log_capture {
-                            log.lock().await.push(LogEntry {
-                                level: "ERROR".to_string(),
-                                message: format!("vLLM translation error: {}", e),
-                            });
-                        }
-
-                        Err(anyhow!("vLLM translation error: {}", e))
-                    }
-                }
+                Err(anyhow!("{} translation error: {}", provider_name, e))
             }
         }
     }
-    
+
     /// Get the maximum number of tokens for a given model
     fn max_tokens_for_model(&self, model: &str) -> u32 {
         match model {
@@ -758,7 +417,7 @@ impl TranslationService {
             "gpt-4-turbo" | "gpt-4-turbo-preview" | "gpt-4-0125-preview" => 4096,
             "gpt-3.5-turbo" | "gpt-3.5-turbo-0613" => 4096,
             "gpt-3.5-turbo-16k" | "gpt-3.5-turbo-16k-0613" => 16384,
-            
+
             // Anthropic models — current generation
             "claude-opus-4-6" | "claude-sonnet-4-6" | "claude-sonnet-4-5-20250514" => 8192,
             "claude-haiku-4-5" | "claude-haiku-4-5-20251001" => 8192,
@@ -779,9 +438,15 @@ impl TranslationService {
 
 impl Clone for TranslationService {
     fn clone(&self) -> Self {
-        // Create a new instance with the same config
-        // This should not fail if the original instance was created successfully
-        TranslationService::new(self.config.clone())
-            .expect("Failed to clone TranslationService - this indicates a serious configuration issue")
+        Self {
+            provider: Arc::clone(&self.provider),
+            config: self.config.clone(),
+            options: TranslationOptions {
+                preserve_formatting: self.options.preserve_formatting,
+                max_concurrent_requests: self.options.max_concurrent_requests,
+                retry_individual_entries: self.options.retry_individual_entries,
+            },
+            cache: self.cache.clone(),
+        }
     }
-} 
+}

@@ -5,9 +5,6 @@
  * using the thiserror crate for ergonomic error definitions.
  */
 
-// Allow dead code - error types are for library consumers
-#![allow(dead_code)]
-
 use thiserror::Error;
 
 /// Errors that can occur when working with provider APIs
@@ -50,7 +47,19 @@ pub enum ProviderError {
 
 /// Errors that can occur during subtitle processing
 #[derive(Error, Debug)]
-pub enum SubtitleError {}
+pub enum SubtitleError {
+    /// Invalid or malformed timestamp
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(String),
+
+    /// Malformed SRT structure
+    #[error("Malformed SRT: {0}")]
+    MalformedSrt(String),
+
+    /// Empty subtitle content
+    #[error("Empty subtitle content at entry {0}")]
+    EmptySubtitle(usize),
+}
 
 /// Errors that can occur during translation
 #[derive(Error, Debug)]
@@ -58,7 +67,7 @@ pub enum TranslationError {
     /// Error from the provider API
     #[error("Provider error: {0}")]
     Provider(#[from] ProviderError),
-    
+
     /// Error with subtitle processing
     #[error("Subtitle error: {0}")]
     Subtitle(#[from] SubtitleError),
