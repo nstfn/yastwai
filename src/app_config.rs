@@ -264,6 +264,16 @@ pub struct TranslationCommonConfig {
     /// - quality: Use new pipeline with thorough analysis and validation
     #[serde(default = "default_pipeline_mode")]
     pub pipeline_mode: String,
+
+    /// Subtitle standard preset: "netflix" (default), "children", "relaxed"
+    /// Controls reading speed (CPS) and line length (CPL) targets
+    #[serde(default = "default_subtitle_preset")]
+    pub subtitle_preset: String,
+
+    /// Disable the reflection pass (saves API calls at cost of quality)
+    /// The reflection pass reviews and improves translations before validation
+    #[serde(default)]
+    pub no_reflection: bool,
 }
 
 fn default_context_entries_count() -> usize {
@@ -272,6 +282,10 @@ fn default_context_entries_count() -> usize {
 
 fn default_pipeline_mode() -> String {
     "legacy".to_string()
+}
+
+fn default_subtitle_preset() -> String {
+    "netflix".to_string()
 }
 
 impl Default for TranslationCommonConfig {
@@ -286,6 +300,8 @@ impl Default for TranslationCommonConfig {
             entries_per_request: default_entries_per_request(),
             context_entries_count: default_context_entries_count(),
             pipeline_mode: default_pipeline_mode(),
+            subtitle_preset: default_subtitle_preset(),
+            no_reflection: false,
         }
     }
 }

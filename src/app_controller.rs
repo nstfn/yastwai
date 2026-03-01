@@ -14,6 +14,7 @@ use crate::session::{PendingEntry, SessionCreateParams, SessionInfo, SessionMana
 use crate::subtitle_processor::SubtitleCollection;
 use crate::translation::core::LogEntry;
 use crate::translation::{BatchTranslator, PipelineAdapter, PipelineMode, TranslationService};
+use crate::translation::pipeline::PipelineConfig;
 use crate::subtitle_processor::SubtitleEntry;
 
 // @module: Application controller for subtitle processing
@@ -431,23 +432,32 @@ impl Controller {
             // Use new multi-pass translation pipeline
             info!("Using new translation pipeline (mode: {:?})", pipeline_mode);
 
-            let adapter = match pipeline_mode {
-                PipelineMode::Fast => PipelineAdapter::fast(
-                    translation_service,
+            let subtitle_standards = PipelineAdapter::parse_subtitle_preset(
+                &self.config.translation.common.subtitle_preset,
+            );
+            let no_reflection = self.config.translation.common.no_reflection;
+
+            let mut pipeline_config = match pipeline_mode {
+                PipelineMode::Fast => PipelineConfig::fast(
                     &self.config.source_language,
                     &self.config.target_language,
                 ),
-                PipelineMode::Quality => PipelineAdapter::quality(
-                    translation_service,
+                PipelineMode::Quality => PipelineConfig::quality(
                     &self.config.source_language,
                     &self.config.target_language,
                 ),
-                _ => PipelineAdapter::with_defaults(
-                    translation_service,
+                _ => PipelineConfig::new(
                     &self.config.source_language,
                     &self.config.target_language,
                 ),
             };
+
+            pipeline_config.subtitle_standards = subtitle_standards;
+            if no_reflection {
+                pipeline_config.enable_reflection = false;
+            }
+
+            let adapter = PipelineAdapter::new(translation_service, pipeline_config);
 
             let progress_callback = {
                 let pb = pb.clone();

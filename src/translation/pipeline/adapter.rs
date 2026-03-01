@@ -15,6 +15,7 @@ use crate::subtitle_processor::SubtitleEntry;
 use crate::translation::core::{TokenUsageStats, TranslationService};
 use crate::translation::document::SubtitleDocument;
 use crate::translation::pipeline::{PipelineConfig, PipelineProgress, TranslationPipeline};
+use crate::translation::subtitle_standards::SubtitleStandards;
 
 /// Adapter for using the new pipeline with legacy SubtitleEntry-based code.
 pub struct PipelineAdapter {
@@ -154,6 +155,15 @@ impl PipelineAdapter {
     /// Get the pipeline result from the last translation.
     pub fn get_pipeline_config(&self) -> &PipelineConfig {
         self.pipeline.config()
+    }
+
+    /// Parse a subtitle preset name into SubtitleStandards.
+    pub fn parse_subtitle_preset(preset: &str) -> SubtitleStandards {
+        match preset.to_lowercase().as_str() {
+            "children" => SubtitleStandards::children(),
+            "relaxed" => SubtitleStandards::relaxed(),
+            _ => SubtitleStandards::netflix(),
+        }
     }
 }
 

@@ -32,6 +32,8 @@ fn get_test_config() -> TranslationConfig {
             entries_per_request: 3,
             context_entries_count: 3,
             pipeline_mode: "legacy".to_string(),
+            subtitle_preset: "netflix".to_string(),
+            no_reflection: false,
         },
         available_providers: vec![
             ProviderConfig {
