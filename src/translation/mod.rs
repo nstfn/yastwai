@@ -25,6 +25,7 @@ pub use self::quality::consistency::{ConsistencyChecker, ConsistencyConfig, Cons
 pub use self::quality::errors::{ErrorRecovery, RecoveryStrategy, TranslationError as TranslationPipelineError, TranslationErrorKind};
 pub use self::quality::metrics::{EntryMetrics, MetricsData, QualityMetrics, QualityScore, QualityThresholds};
 pub use self::quality::repair::{RepairConfig, RepairEngine};
+pub use self::subtitle_standards::SubtitleStandards;
 
 // Public modules
 pub mod batch;
@@ -42,3 +43,4 @@ pub mod quality;
 pub(crate) mod concurrency;
 pub(crate) mod prompts;
 pub(crate) mod speculative;
+pub(crate) mod subtitle_standards;
