@@ -12,6 +12,7 @@
 use crate::translation::context::{ConsistencyIssue, GlossaryEnforcer};
 use crate::translation::document::{DocumentEntry, FormattingTag, SubtitleDocument};
 use crate::translation::quality::semantic::{SemanticIssue, SemanticValidationResult};
+use crate::translation::subtitle_standards::SubtitleStandards;
 
 /// Configuration for the validation pass.
 #[derive(Debug, Clone)]
@@ -36,6 +37,15 @@ pub struct ValidationConfig {
 
     /// Whether to run semantic validation (requires SemanticValidator)
     pub enable_semantic_validation: bool,
+
+    /// Whether to check reading speed (CPS)
+    pub check_reading_speed: bool,
+
+    /// Whether to check line length (CPL)
+    pub check_line_length: bool,
+
+    /// Subtitle display standards for CPS/CPL validation
+    pub subtitle_standards: SubtitleStandards,
 }
 
 impl Default for ValidationConfig {
@@ -48,6 +58,9 @@ impl Default for ValidationConfig {
             enable_auto_repair: true,
             min_confidence_threshold: 0.5,
             enable_semantic_validation: false,
+            check_reading_speed: true,
+            check_line_length: true,
+            subtitle_standards: SubtitleStandards::default(),
         }
     }
 }
@@ -63,6 +76,9 @@ impl ValidationConfig {
             enable_auto_repair: true,
             min_confidence_threshold: 0.7,
             enable_semantic_validation: true,
+            check_reading_speed: true,
+            check_line_length: true,
+            subtitle_standards: SubtitleStandards::default(),
         }
     }
 
@@ -76,6 +92,9 @@ impl ValidationConfig {
             enable_auto_repair: true,
             min_confidence_threshold: 0.3,
             enable_semantic_validation: false,
+            check_reading_speed: false,
+            check_line_length: false,
+            subtitle_standards: SubtitleStandards::relaxed(),
         }
     }
 }
@@ -133,6 +152,21 @@ pub enum ValidationIssue {
         confidence: f32,
         issues: Vec<SemanticIssue>,
     },
+
+    /// Reading speed exceeds target CPS
+    ReadingSpeedExceeded {
+        entry_id: usize,
+        current_cps: f32,
+        max_cps: f32,
+        duration_seconds: f32,
+    },
+
+    /// Single line exceeds maximum character count
+    LineTooLong {
+        entry_id: usize,
+        line_length: usize,
+        max_length: usize,
+    },
 }
 
 /// Structured failure reason for feedback-informed retry
@@ -178,6 +212,15 @@ pub enum FailureReason {
         entry_id: usize,
         issue_description: String,
     },
+
+    /// Subtitle text exceeds reading speed limit
+    ReadingSpeedExceeded {
+        entry_id: usize,
+        current_cps: f32,
+        max_cps: f32,
+        duration_seconds: f32,
+        max_characters: usize,
+    },
 }
 
 impl FailureReason {
@@ -191,6 +234,7 @@ impl FailureReason {
             FailureReason::DroppedFormatting { entry_id, .. } => *entry_id,
             FailureReason::LowConfidence { entry_id, .. } => *entry_id,
             FailureReason::SemanticDivergence { entry_id, .. } => *entry_id,
+            FailureReason::ReadingSpeedExceeded { entry_id, .. } => *entry_id,
         }
     }
 
@@ -214,6 +258,12 @@ impl FailureReason {
             FailureReason::SemanticDivergence { issue_description, .. } => {
                 format!("Fix semantic issue: {}", issue_description)
             }
+            FailureReason::ReadingSpeedExceeded { duration_seconds, max_characters, .. } => {
+                format!(
+                    "This subtitle displays for {:.1}s. Condense to {} characters or fewer",
+                    duration_seconds, max_characters
+                )
+            }
         }
     }
 }
@@ -230,6 +280,8 @@ impl ValidationIssue {
             ValidationIssue::LowConfidence { entry_id, .. } => *entry_id,
             ValidationIssue::EmptyTranslation { entry_id } => *entry_id,
             ValidationIssue::SemanticDivergence { entry_id, .. } => *entry_id,
+            ValidationIssue::ReadingSpeedExceeded { entry_id, .. } => *entry_id,
+            ValidationIssue::LineTooLong { entry_id, .. } => *entry_id,
         }
     }
 
@@ -264,6 +316,12 @@ impl ValidationIssue {
                     entry_id, confidence, issue_count
                 )
             }
+            ValidationIssue::ReadingSpeedExceeded { entry_id, current_cps, max_cps, .. } => {
+                format!("Entry {} reading speed {:.1} CPS exceeds target {:.1} CPS", entry_id, current_cps, max_cps)
+            }
+            ValidationIssue::LineTooLong { entry_id, line_length, max_length } => {
+                format!("Entry {} line has {} characters (max {})", entry_id, line_length, max_length)
+            }
         }
     }
 
@@ -286,6 +344,10 @@ impl ValidationIssue {
                 // Lower confidence = higher severity (closer to 1.0)
                 0.8 + (1.0 - confidence) * 0.2
             }
+            ValidationIssue::ReadingSpeedExceeded { current_cps, max_cps, .. } => {
+                ((current_cps - max_cps) / max_cps).clamp(0.3, 1.0)
+            }
+            ValidationIssue::LineTooLong { .. } => 0.3,
         }
     }
 
@@ -364,6 +426,17 @@ impl ValidationIssue {
                     issue_description: description,
                 })
             }
+            ValidationIssue::ReadingSpeedExceeded { entry_id, current_cps, max_cps, duration_seconds } => {
+                let standards = SubtitleStandards::default();
+                Some(FailureReason::ReadingSpeedExceeded {
+                    entry_id: *entry_id,
+                    current_cps: *current_cps,
+                    max_cps: *max_cps,
+                    duration_seconds: *duration_seconds,
+                    max_characters: standards.max_characters_for_duration(*duration_seconds),
+                })
+            }
+            ValidationIssue::LineTooLong { .. } => None,
             // Non-retryable issues
             ValidationIssue::MissingTranslation { .. } | ValidationIssue::EmptyTranslation { .. } => None,
         }
@@ -685,6 +758,11 @@ impl ValidationPass {
             }
         }
 
+        // Check CPS/CPL subtitle standards
+        for issue in self.check_subtitle_standards(entry) {
+            report.add_issue(issue);
+        }
+
         // Check formatting preservation
         if self.config.check_formatting {
             self.check_formatting(entry, report);
@@ -704,6 +782,46 @@ impl ValidationPass {
                 });
             }
         }
+    }
+
+    /// Check reading speed and line length for a single entry.
+    fn check_subtitle_standards(&self, entry: &DocumentEntry) -> Vec<ValidationIssue> {
+        let mut issues = Vec::new();
+        let standards = &self.config.subtitle_standards;
+
+        if let Some(ref translated) = entry.translated_text {
+            let duration_seconds = entry.timecode.duration_ms() as f32 / 1000.0;
+
+            // CPS check
+            if self.config.check_reading_speed && standards.should_check_cps(duration_seconds) {
+                let cps = standards.calculate_cps(translated, duration_seconds);
+                if cps > standards.target_cps {
+                    issues.push(ValidationIssue::ReadingSpeedExceeded {
+                        entry_id: entry.id,
+                        current_cps: cps,
+                        max_cps: standards.target_cps,
+                        duration_seconds,
+                    });
+                }
+            }
+
+            // CPL check
+            if self.config.check_line_length {
+                for line in translated.lines() {
+                    let line_len = line.chars().count();
+                    if line_len > standards.max_chars_per_line {
+                        issues.push(ValidationIssue::LineTooLong {
+                            entry_id: entry.id,
+                            line_length: line_len,
+                            max_length: standards.max_chars_per_line,
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+
+        issues
     }
 
     /// Check formatting preservation for an entry.
@@ -1227,5 +1345,58 @@ mod tests {
 
         let pass_lenient = ValidationPass::new(ValidationConfig::lenient());
         assert!(!pass_lenient.semantic_validation_enabled());
+    }
+
+    #[test]
+    fn test_validation_issue_reading_speed_exceeded_description() {
+        let issue = ValidationIssue::ReadingSpeedExceeded {
+            entry_id: 5,
+            current_cps: 25.0,
+            max_cps: 17.0,
+            duration_seconds: 2.0,
+        };
+        let desc = issue.description();
+        assert!(desc.contains("25.0"));
+        assert!(desc.contains("17.0"));
+    }
+
+    #[test]
+    fn test_validation_issue_line_too_long_description() {
+        let issue = ValidationIssue::LineTooLong {
+            entry_id: 3,
+            line_length: 55,
+            max_length: 42,
+        };
+        let desc = issue.description();
+        assert!(desc.contains("55"));
+        assert!(desc.contains("42"));
+    }
+
+    #[test]
+    fn test_failure_reason_reading_speed_exceeded_feedback() {
+        let reason = FailureReason::ReadingSpeedExceeded {
+            entry_id: 1,
+            current_cps: 25.0,
+            max_cps: 17.0,
+            duration_seconds: 2.0,
+            max_characters: 34,
+        };
+        let feedback = reason.to_feedback_instruction();
+        assert!(feedback.contains("34"));
+        assert!(feedback.contains("2.0"));
+    }
+
+    #[test]
+    fn test_validation_config_default_enables_reading_speed() {
+        let config = ValidationConfig::default();
+        assert!(config.check_reading_speed);
+        assert!(config.check_line_length);
+    }
+
+    #[test]
+    fn test_validation_config_lenient_disables_reading_speed() {
+        let config = ValidationConfig::lenient();
+        assert!(!config.check_reading_speed);
+        assert!(!config.check_line_length);
     }
 }
