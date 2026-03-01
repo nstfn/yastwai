@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::translation::document::{DocumentEntry, Glossary};
+use crate::translation::subtitle_standards::SubtitleStandards;
 
 /// System prompt template for subtitle translation.
 #[derive(Debug, Clone)]
@@ -18,31 +19,40 @@ pub struct PromptTemplate {
 
 impl PromptTemplate {
     /// The default system prompt for subtitle translation.
-    pub const SUBTITLE_TRANSLATOR: &'static str = r#"You are an expert subtitle translator specializing in {source_language} to {target_language} translation.
+    pub const SUBTITLE_TRANSLATOR: &'static str = r#"You are a professional subtitle translator specializing in {source_language} to {target_language} translation for audiovisual content.
 
-## Your Role
-- Translate dialogue naturally while preserving meaning and emotion
-- Maintain consistency with provided terminology/glossary
-- Preserve formatting tags, sound effects, and speaker indicators
-- Keep translations concise (subtitles have limited display time)
+## Translation Principles
+- Translate for how people SPEAK, not how they write
+- Prioritize naturalness and idiomaticity over literal accuracy
+- Condense when necessary — viewers must read while watching
+- Preserve the emotional tone, register, and character voice of the original
 
-## Context Understanding
-- Review the history summary to understand the narrative flow
-- Reference recent translations for style and terminology consistency
-- Use lookahead entries to anticipate context when helpful
-- Follow the glossary strictly for names and key terms
+## Subtitle Constraints
+- Maximum {max_cpl} characters per line (spaces included)
+- Maximum 2 lines per subtitle block
+- Target reading speed: {target_cps} characters per second or fewer
+- Each subtitle has limited display time — brevity matters
+
+## Condensation Techniques (use when text is too long)
+- Eliminate hesitations, false starts, and filler words
+- Simplify compound sentences into shorter clauses
+- Generalize specific terms when the meaning is clear from context
+- Convert passive voice to active when shorter
+- Drop redundant information recoverable from visuals
+
+## Formatting Rules
+- Preserve [sound effects] and (parentheticals) exactly as formatted
+- Never translate character names unless specifically instructed
+- Keep formatting tags (<i>, <b>, etc.) in their original positions
+- For dual speakers, maintain hyphen formatting
+
+## Glossary
+Follow the provided glossary strictly. If a glossary term appears in the source, use the specified translation. Flag any terms you believe need updating via the notes field.
 
 ## Output Requirements
 - Return ONLY valid JSON matching the requested schema
 - Include a confidence score (0.0-1.0) for each translation
-- Do not include any text outside the JSON structure
-
-## Quality Standards
-- Natural, idiomatic {target_language}
-- Appropriate register (formal/informal) based on dialogue context
-- Length should be similar to original (within 120% where possible)
-- Preserve [sound effects] and (parentheticals) exactly as formatted
-- Never translate character names unless specifically instructed"#;
+- Do not include any text outside the JSON structure"#;
 
     /// Create a new prompt template.
     pub fn new(template: &str) -> Self {
@@ -81,6 +91,7 @@ pub struct TranslationPromptBuilder {
     lookahead_entries: Vec<LookaheadEntry>,
     glossary: Option<Glossary>,
     custom_instructions: Option<String>,
+    subtitle_standards: SubtitleStandards,
 }
 
 impl TranslationPromptBuilder {
@@ -95,6 +106,7 @@ impl TranslationPromptBuilder {
             lookahead_entries: Vec::new(),
             glossary: None,
             custom_instructions: None,
+            subtitle_standards: SubtitleStandards::default(),
         }
     }
 
@@ -118,6 +130,7 @@ impl TranslationPromptBuilder {
                 id: e.id,
                 text: e.original_text.clone(),
                 timecode: e.timecode.format_srt(),
+                duration_seconds: e.timecode.duration_ms() as f32 / 1000.0,
             })
             .collect();
         self
@@ -147,9 +160,18 @@ impl TranslationPromptBuilder {
         self
     }
 
+    /// Set subtitle display standards.
+    pub fn with_subtitle_standards(mut self, standards: SubtitleStandards) -> Self {
+        self.subtitle_standards = standards;
+        self
+    }
+
     /// Build the system prompt.
     pub fn build_system_prompt(&self) -> String {
-        PromptTemplate::subtitle_translator().render(&self.source_language, &self.target_language)
+        PromptTemplate::subtitle_translator()
+            .render(&self.source_language, &self.target_language)
+            .replace("{max_cpl}", &self.subtitle_standards.max_chars_per_line.to_string())
+            .replace("{target_cps}", &format!("{:.0}", self.subtitle_standards.target_cps))
     }
 
     /// Build the user prompt as a JSON request.
@@ -269,6 +291,9 @@ pub struct EntryToTranslate {
 
     /// Timecode (for reference, not to be modified)
     pub timecode: String,
+
+    /// Display duration in seconds, computed from timecodes
+    pub duration_seconds: f32,
 }
 
 /// A lookahead entry for forward context.
@@ -357,7 +382,6 @@ mod tests {
         let rendered = template.render("English", "French");
 
         assert!(rendered.contains("English to French"));
-        assert!(rendered.contains("idiomatic French"));
         assert!(!rendered.contains("{source_language}"));
         assert!(!rendered.contains("{target_language}"));
     }
@@ -368,6 +392,9 @@ mod tests {
         let prompt = builder.build_system_prompt();
 
         assert!(prompt.contains("en to fr"));
+        assert!(prompt.contains("42"));  // max_cpl default
+        assert!(prompt.contains("17"));  // target_cps default
+        assert!(prompt.contains("Condensation"));
     }
 
     #[test]
@@ -377,7 +404,6 @@ mod tests {
 
         let user_prompt = builder.build_user_prompt();
 
-        // Should be valid JSON
         let parsed: serde_json::Result<TranslationRequest> = serde_json::from_str(&user_prompt);
         assert!(parsed.is_ok());
 
@@ -385,6 +411,24 @@ mod tests {
         assert_eq!(request.task, "translate_subtitles");
         assert_eq!(request.source_language, "English");
         assert_eq!(request.target_language, "French");
+    }
+
+    #[test]
+    fn test_entryToTranslate_shouldIncludeDuration() {
+        let entries = vec![crate::translation::document::DocumentEntry {
+            id: 1,
+            timecode: crate::translation::document::Timecode::from_milliseconds(0, 2000),
+            original_text: "Hello world".to_string(),
+            translated_text: None,
+            speaker: None,
+            scene_id: None,
+            formatting: Vec::new(),
+            confidence: None,
+        }];
+        let builder = TranslationPromptBuilder::new("English", "French")
+            .with_entries_to_translate(&entries);
+        let prompt = builder.build_user_prompt();
+        assert!(prompt.contains("duration_seconds"));
     }
 
     #[test]
