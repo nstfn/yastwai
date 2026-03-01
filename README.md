@@ -21,7 +21,7 @@ Yet Another Subtitle Translator with AI -- a command-line tool that extracts sub
 ## Install
 
 ```sh
-git clone https://github.com/nstefan/yastwai.git
+git clone https://github.com/nstfn/yastwai.git
 cd yastwai
 cargo build --release
 ```
