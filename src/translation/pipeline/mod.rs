@@ -12,6 +12,7 @@ pub mod analysis_pass;
 pub mod orchestrator;
 pub mod translation_pass;
 pub mod validation_pass;
+pub mod reflection_pass;
 
 // Re-export types used externally
 pub use adapter::{PipelineAdapter, PipelineMode};
