@@ -223,4 +223,20 @@ mod tests {
         assert!(PipelineMode::Standard.is_pipeline_enabled());
         assert!(PipelineMode::Quality.is_pipeline_enabled());
     }
+
+    #[test]
+    fn test_parseSubtitlePreset_shouldReturnCorrectStandards() {
+        let netflix = PipelineAdapter::parse_subtitle_preset("netflix");
+        assert!((netflix.target_cps - 17.0).abs() < f32::EPSILON);
+
+        let children = PipelineAdapter::parse_subtitle_preset("children");
+        assert!((children.target_cps - 15.0).abs() < f32::EPSILON);
+
+        let relaxed = PipelineAdapter::parse_subtitle_preset("relaxed");
+        assert!((relaxed.target_cps - 20.0).abs() < f32::EPSILON);
+
+        // Unknown preset defaults to netflix
+        let unknown = PipelineAdapter::parse_subtitle_preset("unknown");
+        assert!((unknown.target_cps - 17.0).abs() < f32::EPSILON);
+    }
 }

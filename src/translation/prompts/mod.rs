@@ -11,7 +11,7 @@ pub mod templates;
 
 // Re-export types used by pipeline
 pub use templates::{
-    TranslatedEntry, TranslatedEntryContext,
+    GlossaryContext, TranslatedEntry, TranslatedEntryContext,
     TranslationPromptBuilder, TranslationResponse,
 };
 

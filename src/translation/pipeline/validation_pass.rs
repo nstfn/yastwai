@@ -427,13 +427,12 @@ impl ValidationIssue {
                 })
             }
             ValidationIssue::ReadingSpeedExceeded { entry_id, current_cps, max_cps, duration_seconds } => {
-                let standards = SubtitleStandards::default();
                 Some(FailureReason::ReadingSpeedExceeded {
                     entry_id: *entry_id,
                     current_cps: *current_cps,
                     max_cps: *max_cps,
                     duration_seconds: *duration_seconds,
-                    max_characters: standards.max_characters_for_duration(*duration_seconds),
+                    max_characters: (*max_cps * *duration_seconds) as usize,
                 })
             }
             ValidationIssue::LineTooLong { .. } => None,

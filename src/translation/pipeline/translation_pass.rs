@@ -371,39 +371,7 @@ impl TranslationPass {
 
     /// Extract JSON from a potentially wrapped response.
     fn extract_json(&self, response: &str) -> Result<String> {
-        let trimmed = response.trim();
-
-        // If it starts with {, try to parse as-is
-        if trimmed.starts_with('{') {
-            return Ok(trimmed.to_string());
-        }
-
-        // Look for JSON block in markdown code fence
-        if let Some(start) = trimmed.find("```json") {
-            if let Some(end) = trimmed[start + 7..].find("```") {
-                let json = trimmed[start + 7..start + 7 + end].trim();
-                return Ok(json.to_string());
-            }
-        }
-
-        // Look for JSON block without language specifier
-        if let Some(start) = trimmed.find("```") {
-            if let Some(end) = trimmed[start + 3..].find("```") {
-                let json = trimmed[start + 3..start + 3 + end].trim();
-                if json.starts_with('{') {
-                    return Ok(json.to_string());
-                }
-            }
-        }
-
-        // Look for first { and last }
-        if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
-            if end > start {
-                return Ok(trimmed[start..=end].to_string());
-            }
-        }
-
-        Err(anyhow!("Could not extract JSON from response"))
+        super::extract_json(response)
     }
 
     /// Try fallback extraction for failed batches.

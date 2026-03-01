@@ -1,10 +1,11 @@
 /*!
  * Pipeline orchestrator for coordinating translation passes.
  *
- * The orchestrator manages the three-phase translation pipeline:
+ * The orchestrator manages the four-phase translation pipeline:
  * 1. Analysis Pass: Document preprocessing
  * 2. Translation Pass: Main translation with JSON I/O
- * 3. Validation Pass: Quality assurance and auto-repair
+ * 3. Reflection Pass: MQM-based critique and improvement of drafts
+ * 4. Validation Pass: Quality assurance and auto-repair
  */
 
 use anyhow::Result;
@@ -443,6 +444,12 @@ impl TranslationPipeline {
                 callback(progress.clone());
             }
 
+            // Build index map for O(1) entry lookups by ID
+            let entry_index: std::collections::HashMap<usize, usize> = doc.entries.iter()
+                .enumerate()
+                .map(|(idx, e)| (e.id, idx))
+                .collect();
+
             let total_translated = doc.entries.iter()
                 .filter(|e| e.translated_text.is_some())
                 .count();
@@ -456,25 +463,12 @@ impl TranslationPipeline {
                 .collect();
 
             for chunk_ids in entry_ids.chunks(batch_size) {
-                let pairs: Vec<SourceDraftPair> = chunk_ids
-                    .iter()
-                    .filter_map(|&id| {
-                        doc.entries.iter().find(|e| e.id == id).and_then(|e| {
-                            e.translated_text.as_ref().map(|t| SourceDraftPair {
-                                id: e.id,
-                                source: e.original_text.clone(),
-                                draft: t.clone(),
-                                duration_seconds: e.timecode.duration_ms() as f32 / 1000.0,
-                            })
-                        })
-                    })
-                    .collect();
-
                 // Check if we should skip based on confidence
                 let draft_entries: Vec<crate::translation::prompts::TranslatedEntry> = chunk_ids
                     .iter()
                     .filter_map(|&id| {
-                        doc.entries.iter().find(|e| e.id == id).and_then(|e| {
+                        entry_index.get(&id).and_then(|&idx| {
+                            let e = &doc.entries[idx];
                             e.translated_text.as_ref().map(|t| {
                                 crate::translation::prompts::TranslatedEntry {
                                     id: e.id,
@@ -491,37 +485,59 @@ impl TranslationPipeline {
                     continue;
                 }
 
-                // Step 1: Reflect
                 let glossary = if doc.glossary.is_empty() {
                     None
                 } else {
                     Some(doc.glossary.clone())
                 };
 
-                match self.reflection_pass.reflect(
-                    service,
-                    &pairs,
-                    &glossary,
-                    &self.config.source_language,
-                    &self.config.target_language,
-                    &self.config.subtitle_standards,
-                ).await {
-                    Ok(reflection) => {
-                        if reflection.has_suggestions() {
+                let max_retries = self.reflection_pass.max_retries();
+                for _retry in 0..max_retries {
+                    // Step 1: Reflect (re-read current translations for retry support)
+                    let current_pairs: Vec<SourceDraftPair> = chunk_ids
+                        .iter()
+                        .filter_map(|&id| {
+                            entry_index.get(&id).and_then(|&idx| {
+                                let e = &doc.entries[idx];
+                                e.translated_text.as_ref().map(|t| SourceDraftPair {
+                                    id: e.id,
+                                    source: e.original_text.clone(),
+                                    draft: t.clone(),
+                                    duration_seconds: e.timecode.duration_ms() as f32 / 1000.0,
+                                })
+                            })
+                        })
+                        .collect();
+
+                    match self.reflection_pass.reflect(
+                        service,
+                        &current_pairs,
+                        &glossary,
+                        &self.config.source_language,
+                        &self.config.target_language,
+                        &self.config.subtitle_standards,
+                    ).await {
+                        Ok(reflection) => {
+                            // Filter by minimum severity
+                            let filtered = self.reflection_pass.filter_by_severity(reflection.suggestions);
+                            if filtered.is_empty() {
+                                break; // No actionable suggestions, done with this batch
+                            }
+
                             // Step 2: Improve
                             match self.reflection_pass.improve(
                                 service,
-                                &pairs,
-                                &reflection.suggestions,
+                                &current_pairs,
+                                &filtered,
                                 &self.config.source_language,
                                 &self.config.target_language,
                                 &self.config.subtitle_standards,
                             ).await {
                                 Ok(improved) => {
                                     for entry in &improved {
-                                        if let Some(doc_entry) = doc.entries.iter_mut().find(|e| e.id == entry.id) {
+                                        if let Some(&idx) = entry_index.get(&entry.id) {
                                             if !entry.translated.is_empty() {
-                                                doc_entry.set_translation(
+                                                doc.entries[idx].set_translation(
                                                     entry.translated.clone(),
                                                     entry.confidence,
                                                 );
@@ -531,12 +547,14 @@ impl TranslationPipeline {
                                 }
                                 Err(e) => {
                                     log::warn!("Improvement step failed, keeping draft translations: {}", e);
+                                    break;
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        log::warn!("Reflection step failed, keeping draft translations: {}", e);
+                        Err(e) => {
+                            log::warn!("Reflection step failed, keeping draft translations: {}", e);
+                            break;
+                        }
                     }
                 }
 

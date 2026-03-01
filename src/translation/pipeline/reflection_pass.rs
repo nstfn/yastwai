@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::translation::core::TranslationService;
 use crate::translation::document::Glossary;
-use crate::translation::prompts::TranslatedEntry;
+use crate::translation::prompts::{GlossaryContext, TranslatedEntry};
 use crate::translation::subtitle_standards::SubtitleStandards;
 
 /// Configuration for the reflection pass.
@@ -94,15 +94,6 @@ struct ReflectionRequest {
     glossary: Option<GlossaryContext>,
 }
 
-/// Simplified glossary for reflection prompts.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GlossaryContext {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    character_names: Vec<String>,
-    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    terms: std::collections::HashMap<String, String>,
-}
-
 /// Request structure sent to the improvement LLM call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ImprovementRequest {
@@ -118,6 +109,19 @@ pub struct ReflectionPass {
 impl ReflectionPass {
     pub fn new(config: ReflectionConfig) -> Self {
         Self { config }
+    }
+
+    /// Filter suggestions by the configured minimum severity threshold.
+    pub fn filter_by_severity(&self, suggestions: Vec<ReflectionSuggestion>) -> Vec<ReflectionSuggestion> {
+        suggestions
+            .into_iter()
+            .filter(|s| s.severity >= self.config.min_severity_to_apply)
+            .collect()
+    }
+
+    /// Maximum number of reflection retries from config.
+    pub fn max_retries(&self) -> usize {
+        self.config.max_reflection_retries
     }
 
     /// Check if reflection should be skipped for this batch based on confidence.
@@ -317,37 +321,7 @@ Return the complete set of translations as JSON:
     }
 }
 
-/// Extract JSON from a potentially wrapped LLM response.
-fn extract_json(response: &str) -> Result<String> {
-    let trimmed = response.trim();
-
-    if trimmed.starts_with('{') {
-        return Ok(trimmed.to_string());
-    }
-
-    if let Some(start) = trimmed.find("```json") {
-        if let Some(end) = trimmed[start + 7..].find("```") {
-            return Ok(trimmed[start + 7..start + 7 + end].trim().to_string());
-        }
-    }
-
-    if let Some(start) = trimmed.find("```") {
-        if let Some(end) = trimmed[start + 3..].find("```") {
-            let json = trimmed[start + 3..start + 3 + end].trim();
-            if json.starts_with('{') {
-                return Ok(json.to_string());
-            }
-        }
-    }
-
-    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
-        if end > start {
-            return Ok(trimmed[start..=end].to_string());
-        }
-    }
-
-    Err(anyhow!("Could not extract JSON from reflection response"))
-}
+use super::extract_json;
 
 #[cfg(test)]
 mod tests {
