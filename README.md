@@ -10,7 +10,6 @@ Built in Rust. Supports local and cloud AI providers. Preserves formatting, timi
 - **5 AI providers** — Ollama, OpenAI, Anthropic, LM Studio, vLLM
 - **Multi-pass pipeline** — analysis, translation, reflection, and validation passes
 - **Quality validation** — reading speed, line length, format preservation, length ratio checks
-- **Subtitle presets** — Netflix, children, and relaxed readability standards
 - **Session persistence** — resume interrupted translations automatically via SQLite
 - **Translation caching** — skip already-translated segments across sessions
 - **Parallel processing** — configurable concurrent requests (up to 16)
@@ -93,23 +92,6 @@ Copy `conf.example.json` to `conf.json` and edit to taste. Key sections:
 | vLLM | `localhost:8000` | None |
 
 Each provider supports: `model`, `endpoint`, `concurrent_requests`, `max_chars_per_request`, `timeout_secs`, and optional `rate_limit`.
-
-### Pipeline Modes
-
-| Mode | Description |
-|------|-------------|
-| `legacy` | Traditional batch translation (default) |
-| `fast` | Minimal analysis, no validation |
-| `standard` | Balanced analysis and validation |
-| `quality` | Full analysis, reflection, and validation |
-
-### Subtitle Presets
-
-| Preset | Use case |
-|--------|----------|
-| `netflix` | Professional broadcast standards (default) |
-| `children` | Slower reading speed for young audiences |
-| `relaxed` | Lenient limits for casual use |
 
 ### Other Settings
 

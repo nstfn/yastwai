@@ -344,23 +344,14 @@ fn test_loadTestSrt_andAnalyze_shouldWork() {
 // ============================================================================
 
 #[test]
-fn test_pipelineConfig_fast_shouldSkipValidation() {
+fn test_pipelineConfig_default_shouldEnableAllPhases() {
     use yastwai::translation::PipelineConfig;
 
-    let config = PipelineConfig::fast("en", "fr");
-
-    assert!(config.enable_analysis);
-    assert!(!config.enable_validation);
-}
-
-#[test]
-fn test_pipelineConfig_quality_shouldEnableAll() {
-    use yastwai::translation::PipelineConfig;
-
-    let config = PipelineConfig::quality("en", "fr");
+    let config = PipelineConfig::new("en", "fr");
 
     assert!(config.enable_analysis);
     assert!(config.enable_validation);
+    assert!(config.enable_reflection);
 }
 
 #[test]

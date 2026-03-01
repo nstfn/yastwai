@@ -60,9 +60,9 @@ impl Default for PipelineConfig {
             enable_analysis: true,
             enable_validation: true,
             enable_reflection: true,
-            analysis_config: AnalysisConfig::default(),
-            translation_config: TranslationPassConfig::default(),
-            validation_config: ValidationConfig::default(),
+            analysis_config: AnalysisConfig::thorough(),
+            translation_config: TranslationPassConfig::quality(),
+            validation_config: ValidationConfig::strict(),
             reflection_config: ReflectionConfig::default(),
             subtitle_standards: SubtitleStandards::default(),
             source_language: "en".to_string(),
@@ -78,38 +78,6 @@ impl PipelineConfig {
             source_language: source_language.to_string(),
             target_language: target_language.to_string(),
             ..Default::default()
-        }
-    }
-
-    /// Create a fast pipeline configuration (minimal analysis, no validation).
-    pub fn fast(source_language: &str, target_language: &str) -> Self {
-        Self {
-            enable_analysis: true,
-            enable_validation: false,
-            enable_reflection: false,
-            analysis_config: AnalysisConfig::minimal(),
-            translation_config: TranslationPassConfig::fast(),
-            validation_config: ValidationConfig::default(),
-            reflection_config: ReflectionConfig::default(),
-            subtitle_standards: SubtitleStandards::default(),
-            source_language: source_language.to_string(),
-            target_language: target_language.to_string(),
-        }
-    }
-
-    /// Create a quality-focused pipeline configuration.
-    pub fn quality(source_language: &str, target_language: &str) -> Self {
-        Self {
-            enable_analysis: true,
-            enable_validation: true,
-            enable_reflection: true,
-            analysis_config: AnalysisConfig::thorough(),
-            translation_config: TranslationPassConfig::quality(),
-            validation_config: ValidationConfig::strict(),
-            reflection_config: ReflectionConfig::default(),
-            subtitle_standards: SubtitleStandards::default(),
-            source_language: source_language.to_string(),
-            target_language: target_language.to_string(),
         }
     }
 
@@ -652,22 +620,7 @@ mod tests {
         assert_eq!(config.target_language, "French");
         assert!(config.enable_analysis);
         assert!(config.enable_validation);
-    }
-
-    #[test]
-    fn test_pipelineConfig_fast_shouldDisableValidation() {
-        let config = PipelineConfig::fast("en", "fr");
-
-        assert!(config.enable_analysis);
-        assert!(!config.enable_validation);
-    }
-
-    #[test]
-    fn test_pipelineConfig_quality_shouldEnableAll() {
-        let config = PipelineConfig::quality("en", "fr");
-
-        assert!(config.enable_analysis);
-        assert!(config.enable_validation);
+        assert!(config.enable_reflection);
     }
 
     #[test]
@@ -752,18 +705,6 @@ mod tests {
     #[test]
     fn test_pipelineConfig_default_shouldEnableReflection() {
         let config = PipelineConfig::new("en", "fr");
-        assert!(config.enable_reflection);
-    }
-
-    #[test]
-    fn test_pipelineConfig_fast_shouldDisableReflection() {
-        let config = PipelineConfig::fast("en", "fr");
-        assert!(!config.enable_reflection);
-    }
-
-    #[test]
-    fn test_pipelineConfig_quality_shouldEnableReflection() {
-        let config = PipelineConfig::quality("en", "fr");
         assert!(config.enable_reflection);
     }
 

@@ -94,7 +94,7 @@ impl ValidationConfig {
             enable_semantic_validation: false,
             check_reading_speed: false,
             check_line_length: false,
-            subtitle_standards: SubtitleStandards::relaxed(),
+            subtitle_standards: SubtitleStandards::default(),
         }
     }
 }

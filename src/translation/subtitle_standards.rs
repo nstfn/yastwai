@@ -1,18 +1,18 @@
 /*!
- * Subtitle display standards for professional subtitle translation.
+ * Subtitle display standards for translation quality validation.
  *
- * Provides configurable constraints based on industry standards (Netflix, TED)
- * for reading speed (CPS), line length (CPL), and subtitle structure.
+ * Provides configurable constraints for reading speed (CPS),
+ * line length (CPL), and subtitle structure.
  */
 
 /// Subtitle display standards configuration.
 #[derive(Debug, Clone)]
 pub struct SubtitleStandards {
-    /// Maximum characters per line (spaces included). Default: 42 (Netflix).
+    /// Maximum characters per line (spaces included).
     pub max_chars_per_line: usize,
-    /// Maximum number of lines per subtitle block. Default: 2.
+    /// Maximum number of lines per subtitle block.
     pub max_lines: usize,
-    /// Target characters per second for comfortable reading. Default: 17.0 (Netflix).
+    /// Target characters per second for comfortable reading.
     pub target_cps: f32,
     /// Minimum subtitle duration in seconds to apply CPS checks.
     pub min_duration_for_cps_check: f32,
@@ -20,13 +20,6 @@ pub struct SubtitleStandards {
 
 impl Default for SubtitleStandards {
     fn default() -> Self {
-        Self::netflix()
-    }
-}
-
-impl SubtitleStandards {
-    /// Netflix standard: 42 CPL, 17 CPS.
-    pub fn netflix() -> Self {
         Self {
             max_chars_per_line: 42,
             max_lines: 2,
@@ -34,27 +27,9 @@ impl SubtitleStandards {
             min_duration_for_cps_check: 0.5,
         }
     }
+}
 
-    /// Children's content: 42 CPL, 15 CPS.
-    pub fn children() -> Self {
-        Self {
-            max_chars_per_line: 42,
-            max_lines: 2,
-            target_cps: 15.0,
-            min_duration_for_cps_check: 0.5,
-        }
-    }
-
-    /// Relaxed standard: 42 CPL, 20 CPS.
-    pub fn relaxed() -> Self {
-        Self {
-            max_chars_per_line: 42,
-            max_lines: 2,
-            target_cps: 20.0,
-            min_duration_for_cps_check: 0.5,
-        }
-    }
-
+impl SubtitleStandards {
     /// Calculate maximum characters allowed for a given duration.
     pub fn max_characters_for_duration(&self, duration_seconds: f32) -> usize {
         (self.target_cps * duration_seconds) as usize
@@ -79,24 +54,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_subtitle_standards_default_uses_netflix_values() {
+    fn test_subtitle_standards_default_values() {
         let standards = SubtitleStandards::default();
         assert_eq!(standards.max_chars_per_line, 42);
         assert_eq!(standards.max_lines, 2);
         assert!((standards.target_cps - 17.0).abs() < f32::EPSILON);
         assert!((standards.min_duration_for_cps_check - 0.5).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_subtitle_standards_children_preset() {
-        let standards = SubtitleStandards::children();
-        assert!((standards.target_cps - 15.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_subtitle_standards_relaxed_preset() {
-        let standards = SubtitleStandards::relaxed();
-        assert!((standards.target_cps - 20.0).abs() < f32::EPSILON);
     }
 
     #[test]

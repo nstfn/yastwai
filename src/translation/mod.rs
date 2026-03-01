@@ -6,9 +6,8 @@
  */
 
 // Re-export main types
-pub use self::batch::BatchTranslator;
 pub use self::core::TranslationService;
-pub use self::pipeline::{PipelineAdapter, PipelineMode};
+pub use self::pipeline::PipelineAdapter;
 
 // Re-export document types
 pub use self::document::{DocumentEntry, Glossary, SubtitleDocument};

@@ -667,9 +667,9 @@ Hope this helps!"#;
         use crate::translation::subtitle_standards::SubtitleStandards;
 
         let config = TranslationPassConfig {
-            subtitle_standards: SubtitleStandards::children(),
+            subtitle_standards: SubtitleStandards::default(),
             ..Default::default()
         };
-        assert!((config.subtitle_standards.target_cps - 15.0).abs() < f32::EPSILON);
+        assert!((config.subtitle_standards.target_cps - 17.0).abs() < f32::EPSILON);
     }
 }

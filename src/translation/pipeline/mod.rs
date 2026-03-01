@@ -16,7 +16,7 @@ pub mod validation_pass;
 pub mod reflection_pass;
 
 // Re-export types used externally
-pub use adapter::{PipelineAdapter, PipelineMode};
+pub use adapter::PipelineAdapter;
 pub use orchestrator::{PipelineConfig, PipelineProgress, TranslationPipeline};
 
 use anyhow::{anyhow, Result};
