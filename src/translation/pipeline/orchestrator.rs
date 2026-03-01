@@ -14,8 +14,10 @@ use crate::translation::core::TranslationService;
 use crate::translation::document::SubtitleDocument;
 
 use super::analysis_pass::{AnalysisConfig, AnalysisPass, AnalysisResult};
+use super::reflection_pass::{ReflectionConfig, ReflectionPass, SourceDraftPair};
 use super::translation_pass::{TranslationPass, TranslationPassConfig, TranslationStats};
 use super::validation_pass::{ValidationConfig, ValidationPass, ValidationReport};
+use crate::translation::subtitle_standards::SubtitleStandards;
 
 /// Configuration for the translation pipeline.
 #[derive(Debug, Clone)]
@@ -35,6 +37,15 @@ pub struct PipelineConfig {
     /// Configuration for the validation pass
     pub validation_config: ValidationConfig,
 
+    /// Whether to run the reflection pass
+    pub enable_reflection: bool,
+
+    /// Configuration for the reflection pass
+    pub reflection_config: ReflectionConfig,
+
+    /// Subtitle display standards
+    pub subtitle_standards: SubtitleStandards,
+
     /// Source language
     pub source_language: String,
 
@@ -47,9 +58,12 @@ impl Default for PipelineConfig {
         Self {
             enable_analysis: true,
             enable_validation: true,
+            enable_reflection: true,
             analysis_config: AnalysisConfig::default(),
             translation_config: TranslationPassConfig::default(),
             validation_config: ValidationConfig::default(),
+            reflection_config: ReflectionConfig::default(),
+            subtitle_standards: SubtitleStandards::default(),
             source_language: "en".to_string(),
             target_language: "fr".to_string(),
         }
@@ -71,9 +85,12 @@ impl PipelineConfig {
         Self {
             enable_analysis: true,
             enable_validation: false,
+            enable_reflection: false,
             analysis_config: AnalysisConfig::minimal(),
             translation_config: TranslationPassConfig::fast(),
             validation_config: ValidationConfig::default(),
+            reflection_config: ReflectionConfig::default(),
+            subtitle_standards: SubtitleStandards::default(),
             source_language: source_language.to_string(),
             target_language: target_language.to_string(),
         }
@@ -84,9 +101,12 @@ impl PipelineConfig {
         Self {
             enable_analysis: true,
             enable_validation: true,
+            enable_reflection: true,
             analysis_config: AnalysisConfig::thorough(),
             translation_config: TranslationPassConfig::quality(),
             validation_config: ValidationConfig::strict(),
+            reflection_config: ReflectionConfig::default(),
+            subtitle_standards: SubtitleStandards::default(),
             source_language: source_language.to_string(),
             target_language: target_language.to_string(),
         }
@@ -119,6 +139,24 @@ impl PipelineConfig {
     /// Set custom validation configuration.
     pub fn with_validation_config(mut self, config: ValidationConfig) -> Self {
         self.validation_config = config;
+        self
+    }
+
+    /// Enable or disable reflection pass.
+    pub fn with_reflection(mut self, enabled: bool) -> Self {
+        self.enable_reflection = enabled;
+        self
+    }
+
+    /// Set custom reflection configuration.
+    pub fn with_reflection_config(mut self, config: ReflectionConfig) -> Self {
+        self.reflection_config = config;
+        self
+    }
+
+    /// Set subtitle standards.
+    pub fn with_subtitle_standards(mut self, standards: SubtitleStandards) -> Self {
+        self.subtitle_standards = standards;
         self
     }
 }
@@ -165,9 +203,10 @@ impl PipelineProgress {
 
         // Calculate overall progress based on phase
         self.overall_progress = match self.phase {
-            PipelinePhase::Analysis => phase_progress * 0.1,
-            PipelinePhase::Translation => 0.1 + phase_progress * 0.8,
-            PipelinePhase::Validation => 0.9 + phase_progress * 0.1,
+            PipelinePhase::Analysis => phase_progress * 0.05,
+            PipelinePhase::Translation => 0.05 + phase_progress * 0.40,
+            PipelinePhase::Reflection => 0.45 + phase_progress * 0.40,
+            PipelinePhase::Validation => 0.85 + phase_progress * 0.15,
         };
     }
 
@@ -186,6 +225,8 @@ pub enum PipelinePhase {
     Analysis,
     /// Main translation phase
     Translation,
+    /// Reflection and improvement phase
+    Reflection,
     /// Quality validation phase
     Validation,
 }
@@ -284,6 +325,7 @@ pub struct TranslationPipeline {
     config: PipelineConfig,
     analysis_pass: AnalysisPass,
     translation_pass: TranslationPass,
+    reflection_pass: ReflectionPass,
     validation_pass: ValidationPass,
 }
 
@@ -292,12 +334,14 @@ impl TranslationPipeline {
     pub fn new(config: PipelineConfig) -> Self {
         let analysis_pass = AnalysisPass::new(config.analysis_config.clone());
         let translation_pass = TranslationPass::new(config.translation_config.clone());
+        let reflection_pass = ReflectionPass::new(config.reflection_config.clone());
         let validation_pass = ValidationPass::new(config.validation_config.clone());
 
         Self {
             config,
             analysis_pass,
             translation_pass,
+            reflection_pass,
             validation_pass,
         }
     }
@@ -382,6 +426,125 @@ impl TranslationPipeline {
         progress.update(1.0, "Translation complete");
         if let Some(ref callback) = progress_callback {
             callback(progress.clone());
+        }
+
+        // Phase 2.5: Reflection
+        if self.config.enable_reflection {
+            progress.next_phase(PipelinePhase::Reflection);
+            progress.update(0.0, "Reflecting on translations...");
+            if let Some(ref callback) = progress_callback {
+                callback(progress.clone());
+            }
+
+            let total_translated = doc.entries.iter()
+                .filter(|e| e.translated_text.is_some())
+                .count();
+            let mut reflected_count = 0;
+
+            // Process in batches matching translation window size
+            let batch_size = self.config.translation_config.window_config.batch_size;
+            let entry_ids: Vec<usize> = doc.entries.iter()
+                .filter(|e| e.translated_text.is_some())
+                .map(|e| e.id)
+                .collect();
+
+            for chunk_ids in entry_ids.chunks(batch_size) {
+                let pairs: Vec<SourceDraftPair> = chunk_ids
+                    .iter()
+                    .filter_map(|&id| {
+                        doc.entries.iter().find(|e| e.id == id).and_then(|e| {
+                            e.translated_text.as_ref().map(|t| SourceDraftPair {
+                                id: e.id,
+                                source: e.original_text.clone(),
+                                draft: t.clone(),
+                                duration_seconds: e.timecode.duration_ms() as f32 / 1000.0,
+                            })
+                        })
+                    })
+                    .collect();
+
+                // Check if we should skip based on confidence
+                let draft_entries: Vec<crate::translation::prompts::TranslatedEntry> = chunk_ids
+                    .iter()
+                    .filter_map(|&id| {
+                        doc.entries.iter().find(|e| e.id == id).and_then(|e| {
+                            e.translated_text.as_ref().map(|t| {
+                                crate::translation::prompts::TranslatedEntry {
+                                    id: e.id,
+                                    translated: t.clone(),
+                                    confidence: e.confidence,
+                                }
+                            })
+                        })
+                    })
+                    .collect();
+
+                if self.reflection_pass.should_skip(&draft_entries) {
+                    reflected_count += chunk_ids.len();
+                    continue;
+                }
+
+                // Step 1: Reflect
+                let glossary = if doc.glossary.is_empty() {
+                    None
+                } else {
+                    Some(doc.glossary.clone())
+                };
+
+                match self.reflection_pass.reflect(
+                    service,
+                    &pairs,
+                    &glossary,
+                    &self.config.source_language,
+                    &self.config.target_language,
+                    &self.config.subtitle_standards,
+                ).await {
+                    Ok(reflection) => {
+                        if reflection.has_suggestions() {
+                            // Step 2: Improve
+                            match self.reflection_pass.improve(
+                                service,
+                                &pairs,
+                                &reflection.suggestions,
+                                &self.config.source_language,
+                                &self.config.target_language,
+                                &self.config.subtitle_standards,
+                            ).await {
+                                Ok(improved) => {
+                                    for entry in &improved {
+                                        if let Some(doc_entry) = doc.entries.iter_mut().find(|e| e.id == entry.id) {
+                                            if !entry.translated.is_empty() {
+                                                doc_entry.set_translation(
+                                                    entry.translated.clone(),
+                                                    entry.confidence,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("Improvement step failed, keeping draft translations: {}", e);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Reflection step failed, keeping draft translations: {}", e);
+                    }
+                }
+
+                reflected_count += chunk_ids.len();
+                if let Some(ref callback) = progress_callback {
+                    let p = reflected_count as f32 / total_translated.max(1) as f32;
+                    progress.update(p, &format!("Reflected on {}/{} entries", reflected_count, total_translated));
+                    callback(progress.clone());
+                }
+            }
+
+            progress.update(1.0, "Reflection complete");
+            if let Some(ref callback) = progress_callback {
+                callback(progress.clone());
+            }
         }
 
         // Phase 3: Validation
@@ -488,10 +651,10 @@ mod tests {
 
         progress.update(0.5, "Halfway through translation");
 
-        // Translation phase is 0.1 to 0.9 (80% of total)
-        // At 50% of translation, overall should be ~0.1 + 0.4 = 0.5
-        assert!(progress.overall_progress > 0.4);
-        assert!(progress.overall_progress < 0.6);
+        // Translation phase is 0.05 to 0.45 (40% of total)
+        // At 50% of translation, overall should be 0.05 + 0.5*0.40 = 0.25
+        assert!(progress.overall_progress > 0.2);
+        assert!(progress.overall_progress < 0.3);
     }
 
     #[test]
@@ -559,5 +722,29 @@ mod tests {
         let report = pipeline.validate(&mut doc);
 
         assert_eq!(report.entries_validated, 5);
+    }
+
+    #[test]
+    fn test_pipelineConfig_default_shouldEnableReflection() {
+        let config = PipelineConfig::new("en", "fr");
+        assert!(config.enable_reflection);
+    }
+
+    #[test]
+    fn test_pipelineConfig_fast_shouldDisableReflection() {
+        let config = PipelineConfig::fast("en", "fr");
+        assert!(!config.enable_reflection);
+    }
+
+    #[test]
+    fn test_pipelineConfig_quality_shouldEnableReflection() {
+        let config = PipelineConfig::quality("en", "fr");
+        assert!(config.enable_reflection);
+    }
+
+    #[test]
+    fn test_pipelinePhase_reflection_existsInEnum() {
+        let phase = PipelinePhase::Reflection;
+        assert_eq!(format!("{:?}", phase), "Reflection");
     }
 }
