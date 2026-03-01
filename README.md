@@ -1,22 +1,26 @@
 # YASTwAI
 
-Yet Another Subtitle Translator with AI -- a command-line tool that extracts subtitles from videos and translates them using AI. Built with Rust, it preserves formatting and timing across multiple translation providers.
+**Yet Another Subtitle Translator with AI** — extract subtitles from videos and translate them using AI, all from the command line.
+
+Built in Rust. Supports local and cloud AI providers. Preserves formatting, timing, and readability.
 
 ## Features
 
-- **Extract and translate** -- pull subtitles from videos and translate in one step
-- **Multiple providers** -- Ollama, OpenAI, Anthropic, LM Studio, vLLM
-- **Parallel translation** -- concurrent batch processing with configurable parallelism
-- **Context-aware** -- uses surrounding entries for consistent translations
-- **Session persistence** -- resume interrupted translations automatically
-- **Direct SRT translation** -- translate existing SRT files without a video source
-- **Progress tracking** -- real-time progress for long translations
-- **Session management** -- list, resume, and clean up translation sessions
+- **One-step workflow** — extract and translate subtitles from video files or directories
+- **5 AI providers** — Ollama, OpenAI, Anthropic, LM Studio, vLLM
+- **Multi-pass pipeline** — analysis, translation, reflection, and validation passes
+- **Quality validation** — reading speed, line length, format preservation, length ratio checks
+- **Subtitle presets** — Netflix, children, and relaxed readability standards
+- **Session persistence** — resume interrupted translations automatically via SQLite
+- **Translation caching** — skip already-translated segments across sessions
+- **Parallel processing** — configurable concurrent requests (up to 16)
+- **Context-aware** — uses surrounding entries and glossary for consistent output
+- **Direct SRT support** — translate existing `.srt` files without a video source
 
 ## Requirements
 
-- Rust 1.85+ and Cargo
-- FFmpeg
+- [Rust](https://www.rust-lang.org/tools/install) 1.85+
+- [FFmpeg](https://ffmpeg.org/download.html)
 
 ## Install
 
@@ -26,51 +30,96 @@ cd yastwai
 cargo build --release
 ```
 
-## Usage
+The binary will be at `./target/release/yastwai`.
+
+## Quick Start
 
 ```sh
-# Copy and edit configuration
+# Copy the example config
 cp conf.example.json conf.json
 
 # Translate subtitles from a video
-./target/release/yastwai video.mkv
+yastwai video.mkv
 
-# Process all files in a directory
-./target/release/yastwai videos/
+# Process a directory of videos
+yastwai videos/
 
 # Translate an existing SRT file
-./target/release/yastwai subtitles.srt
+yastwai subtitles.srt
+```
 
-# Overwrite existing output
-./target/release/yastwai -f video.mkv
+## Usage
 
-# Resume an interrupted translation
-./target/release/yastwai translate -R video.mkv
+```
+yastwai [OPTIONS] <INPUT>
+yastwai sessions <COMMAND>
+```
 
-# Manage sessions
-./target/release/yastwai sessions list
-./target/release/yastwai sessions clean
+| Option | Description |
+|--------|-------------|
+| `-p, --provider <NAME>` | AI provider (`ollama`, `openai`, `anthropic`, `lmstudio`, `vllm`) |
+| `-m, --model <NAME>` | Model to use for translation |
+| `-s, --source-language <CODE>` | Source language (e.g. `en`) |
+| `-t, --target-language <CODE>` | Target language (e.g. `fr`) |
+| `-c, --config <PATH>` | Config file path (default: `conf.json`) |
+| `-f, --force-overwrite` | Overwrite existing output files |
+| `-R, --resume` | Resume an interrupted translation |
+| `-e, --extract-only` | Extract subtitles without translating |
+| `-l, --log-level <LEVEL>` | Log level (`error`, `warn`, `info`, `debug`, `trace`) |
+
+### Session Management
+
+```sh
+yastwai sessions list              # List all sessions
+yastwai sessions resume <ID>       # Resume a session
+yastwai sessions info <ID>         # Show session details
+yastwai sessions stats             # Database statistics
+yastwai sessions clean             # Remove sessions older than 30 days
+yastwai sessions delete <ID>       # Delete a specific session
 ```
 
 ## Configuration
 
-Copy `conf.example.json` to `conf.json`. Key settings:
-
-- `source_language` / `target_language` -- ISO language codes
-- `translation.provider` -- which provider to use
-- `translation.available_providers` -- provider-specific settings (model, endpoint, API key)
-
-See `conf.example.json` for all options.
+Copy `conf.example.json` to `conf.json` and edit to taste. Key sections:
 
 ### Providers
 
-| Provider | Default endpoint | Notes |
-|----------|-----------------|-------|
-| Ollama | `localhost:11434` | Local, no API key required |
-| OpenAI | `api.openai.com` | Requires API key |
-| Anthropic | `api.anthropic.com` | Requires API key |
-| LM Studio | `localhost:1234` | Local, OpenAI-compatible |
-| vLLM | `localhost:8000` | Local, OpenAI-compatible |
+| Provider | Endpoint | Auth |
+|----------|----------|------|
+| Ollama | `localhost:11434` | None |
+| OpenAI | `api.openai.com` | API key |
+| Anthropic | `api.anthropic.com` | API key |
+| LM Studio | `localhost:1234` | None |
+| vLLM | `localhost:8000` | None |
+
+Each provider supports: `model`, `endpoint`, `concurrent_requests`, `max_chars_per_request`, `timeout_secs`, and optional `rate_limit`.
+
+### Pipeline Modes
+
+| Mode | Description |
+|------|-------------|
+| `legacy` | Traditional batch translation (default) |
+| `fast` | Minimal analysis, no validation |
+| `standard` | Balanced analysis and validation |
+| `quality` | Full analysis, reflection, and validation |
+
+### Subtitle Presets
+
+| Preset | Use case |
+|--------|----------|
+| `netflix` | Professional broadcast standards (default) |
+| `children` | Slower reading speed for young audiences |
+| `relaxed` | Lenient limits for casual use |
+
+### Other Settings
+
+- **`validation`** — toggle format, timecode, marker, and length ratio checks
+- **`cache`** — in-memory and cross-session translation caching
+- **`session`** — auto-resume, retention period, database path
+- **`no_reflection`** — disable the AI review pass to save API calls
+- **`experimental`** — opt-in features like adaptive batching, speaker tracking, glossary matching
+
+See [`conf.example.json`](conf.example.json) for the full reference.
 
 ## Contributing
 
@@ -78,4 +127,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE) — Stefan Negouai
