@@ -333,9 +333,16 @@ impl TranslationPipeline {
     /// Create a new pipeline with the given configuration.
     pub fn new(config: PipelineConfig) -> Self {
         let analysis_pass = AnalysisPass::new(config.analysis_config.clone());
-        let translation_pass = TranslationPass::new(config.translation_config.clone());
+
+        let mut translation_config = config.translation_config.clone();
+        translation_config.subtitle_standards = config.subtitle_standards.clone();
+        let translation_pass = TranslationPass::new(translation_config);
+
         let reflection_pass = ReflectionPass::new(config.reflection_config.clone());
-        let validation_pass = ValidationPass::new(config.validation_config.clone());
+
+        let mut validation_config = config.validation_config.clone();
+        validation_config.subtitle_standards = config.subtitle_standards.clone();
+        let validation_pass = ValidationPass::new(validation_config);
 
         Self {
             config,

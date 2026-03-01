@@ -16,6 +16,7 @@ use crate::translation::pipeline::validation_pass::FailureReason;
 use crate::translation::prompts::{
     TranslatedEntry, TranslationPromptBuilder, TranslationResponse,
 };
+use crate::translation::subtitle_standards::SubtitleStandards;
 
 /// Configuration for the translation pass.
 #[derive(Debug, Clone)]
@@ -34,6 +35,9 @@ pub struct TranslationPassConfig {
 
     /// Custom translation instructions
     pub custom_instructions: Option<String>,
+
+    /// Subtitle display standards for prompt builder
+    pub subtitle_standards: SubtitleStandards,
 }
 
 impl Default for TranslationPassConfig {
@@ -44,6 +48,7 @@ impl Default for TranslationPassConfig {
             accept_glossary_updates: true,
             use_extractive_fallback: true,
             custom_instructions: None,
+            subtitle_standards: SubtitleStandards::default(),
         }
     }
 }
@@ -57,6 +62,7 @@ impl TranslationPassConfig {
             accept_glossary_updates: false,
             use_extractive_fallback: true,
             custom_instructions: None,
+            subtitle_standards: SubtitleStandards::default(),
         }
     }
 
@@ -68,6 +74,7 @@ impl TranslationPassConfig {
             accept_glossary_updates: true,
             use_extractive_fallback: true,
             custom_instructions: None,
+            subtitle_standards: SubtitleStandards::default(),
         }
     }
 
@@ -275,7 +282,8 @@ impl TranslationPass {
     /// Build a prompt from a context window.
     fn build_prompt_from_window(&self, window: &ContextWindow) -> TranslationPromptBuilder {
         let mut builder =
-            TranslationPromptBuilder::new(&window.source_language, &window.target_language);
+            TranslationPromptBuilder::new(&window.source_language, &window.target_language)
+                .with_subtitle_standards(self.config.subtitle_standards.clone());
 
         // Add history summary if available
         if let Some(ref summary) = window.history_summary {
@@ -684,5 +692,16 @@ Hope this helps!"#;
         let feedback = pass.build_feedback_section(&reasons);
 
         assert!(feedback.is_empty());
+    }
+
+    #[test]
+    fn test_translationPassConfig_shouldAcceptSubtitleStandards() {
+        use crate::translation::subtitle_standards::SubtitleStandards;
+
+        let config = TranslationPassConfig {
+            subtitle_standards: SubtitleStandards::children(),
+            ..Default::default()
+        };
+        assert!((config.subtitle_standards.target_cps - 15.0).abs() < f32::EPSILON);
     }
 }
