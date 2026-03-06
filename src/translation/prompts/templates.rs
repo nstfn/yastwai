@@ -50,9 +50,18 @@ impl PromptTemplate {
 Follow the provided glossary strictly. If a glossary term appears in the source, use the specified translation. Flag any terms you believe need updating via the notes field.
 
 ## Output Requirements
-- Return ONLY valid JSON matching the requested schema
+- Return ONLY valid JSON matching the schema below
 - Include a confidence score (0.0-1.0) for each translation
-- Do not include any text outside the JSON structure"#;
+- Do not include any text outside the JSON structure
+
+### Response Schema
+```json
+{
+  "translations": [
+    {"id": 1, "translated": "Translated text here", "confidence": 0.95}
+  ]
+}
+```"#;
 
     /// Create a new prompt template.
     pub fn new(template: &str) -> Self {
@@ -353,6 +362,7 @@ pub struct TranslatedEntry {
     pub id: usize,
 
     /// Translated text
+    #[serde(alias = "translated_text", alias = "text")]
     pub translated: String,
 
     /// Confidence score (0.0-1.0)

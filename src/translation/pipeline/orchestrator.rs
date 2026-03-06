@@ -9,6 +9,7 @@
  */
 
 use anyhow::Result;
+use log::{debug, info};
 use std::time::{Duration, Instant};
 
 use crate::translation::core::TranslationService;
@@ -340,6 +341,7 @@ impl TranslationPipeline {
         let mut progress = PipelineProgress::new(PipelinePhase::Analysis, total_entries);
 
         // Phase 1: Analysis
+        info!("Pipeline Phase 1: Analysis (enabled={})", self.config.enable_analysis);
         let analysis_result = if self.config.enable_analysis {
             progress.update(0.0, "Analyzing document...");
             if let Some(ref callback) = progress_callback {
@@ -359,6 +361,7 @@ impl TranslationPipeline {
         };
 
         // Phase 2: Translation
+        info!("Pipeline Phase 2: Translation starting");
         progress.next_phase(PipelinePhase::Translation);
         if let Some(ref callback) = progress_callback {
             callback(progress.clone());

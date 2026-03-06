@@ -7,6 +7,7 @@
  */
 
 use anyhow::{anyhow, Result};
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 
 use crate::translation::context::{ContextWindow, ContextWindowConfig};
@@ -171,6 +172,7 @@ impl TranslationPass {
         while retries <= self.config.max_retries {
             match self.attempt_translation(service, &system_prompt, &user_prompt).await {
                 Ok(response) => {
+                    debug!("Translation attempt {} succeeded with {} entries", retries, response.translations.len());
                     let mut result = BatchResult::new(response.translations, entry_ids.clone());
                     result.retries_used = retries;
 
@@ -186,6 +188,7 @@ impl TranslationPass {
                     return Ok(result);
                 }
                 Err(e) => {
+                    debug!("Translation attempt {} failed: {}", retries, e);
                     last_error = Some(e);
                     retries += 1;
                 }
@@ -352,9 +355,13 @@ impl TranslationPass {
         // Build combined prompt for translation
         let combined_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
 
+        debug!("Sending translation request ({} chars)", combined_prompt.len());
+
         // Use the translation service
         let response =
             service.translate_text(&combined_prompt, "prompt", "json_response").await?;
+
+        debug!("Received translation response ({} chars)", response.len());
 
         // Parse the JSON response
         self.parse_translation_response(&response)
@@ -423,6 +430,7 @@ impl TranslationPass {
         }
 
         // Create context windows
+        debug!("Creating context windows for {} entries", total_entries);
         let windows: Vec<ContextWindow> = {
             use crate::translation::context::ContextWindowExt;
             doc.context_windows(
@@ -434,10 +442,13 @@ impl TranslationPass {
         };
 
         stats.total_batches = windows.len();
+        info!("Created {} context windows, starting translation", windows.len());
 
         // Process each window
         for (batch_idx, window) in windows.into_iter().enumerate() {
+            debug!("Translating batch {}/{} ({} entries in batch)", batch_idx + 1, stats.total_batches, window.current_batch.len());
             let result = self.translate_batch(service, &window).await?;
+            debug!("Batch {}/{} complete: {} translations", batch_idx + 1, stats.total_batches, result.translations.len());
 
             // Apply results
             self.apply_batch_result(doc, &result);
